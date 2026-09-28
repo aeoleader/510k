@@ -78,10 +78,13 @@ function resolveTrick(s, emit) {
 // action: { seat, type: 'play', cards } | { seat, type: 'pass' }, optional auto: true.
 export function apply(state, action) {
   if (state.over) throw new GameError('hand_over');
+  if (action === null || typeof action !== 'object') throw new GameError('bad_action');
   if (action.seat !== state.turn) throw new GameError('not_your_turn');
   const s = structuredClone(state);
   const events = [];
   const emit = (e) => events.push({ seq: s.seq++, ...e });
+  // The server sets `auto` itself when it plays a hand for an idle/absent seat;
+  // it is never forwarded from a client action.
   const auto = Boolean(action.auto);
 
   if (action.type === 'pass') {

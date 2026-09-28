@@ -23,6 +23,13 @@ test('rejects out-of-turn, foreign cards, invalid combos, weaker plays, leading 
   assert.equal(code(() => apply(s3, play(1, ['5S0']))), 'too_small');
 });
 
+test('rejects malformed actions', () => {
+  const s = createHandState({ hands: [['3S0', '4S0'], ['5S0', '6S0'], ['7S0'], ['8S0']], teams: [0, 1, 0, 1], leader: 0 });
+  const code = (fn) => { try { fn(); } catch (e) { assert.ok(e instanceof GameError); return e.code; } return null; };
+  assert.equal(code(() => apply(s, null)), 'bad_action');
+  assert.equal(code(() => apply(s, 'x')), 'bad_action');
+});
+
 test('trick goes to last player after everyone else passes; points captured', () => {
   const s = createHandState({
     hands: [['5S0', '3S0'], ['TS0', '3H0'], ['KS0', '3C0'], ['4D0', '3D0']],
