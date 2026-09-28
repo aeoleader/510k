@@ -1,5 +1,5 @@
 import { identify, beats } from './combos.js';
-import { sumPoints } from './cards.js';
+import { sumPoints, MIN_DECKS, MAX_DECKS } from './cards.js';
 
 export class GameError extends Error {
   constructor(code) {
@@ -9,7 +9,8 @@ export class GameError extends Error {
 }
 
 // State of one hand in play. Treat as immutable: apply() returns a new state.
-export function createHandState({ hands, teams, leader }) {
+export function createHandState({ hands, teams, leader, decks }) {
+  if (!Number.isInteger(decks) || decks < MIN_DECKS || decks > MAX_DECKS) throw new GameError('bad_decks');
   if (!hands[leader]?.length) throw new GameError('bad_leader');
   return {
     hands: hands.map((h) => [...h]),
@@ -20,6 +21,7 @@ export function createHandState({ hands, teams, leader }) {
     finished: [],
     over: false,
     seq: 0,
+    decks,
   };
 }
 
@@ -103,7 +105,7 @@ export function apply(state, action) {
   if (!Array.isArray(cards) || new Set(cards).size !== cards.length || !cards.every((c) => hand.includes(c))) {
     throw new GameError('not_in_hand');
   }
-  const combo = identify(cards);
+  const combo = identify(cards, s.decks);
   if (!combo) throw new GameError('invalid_combo');
   if (s.trick && !beats(combo, s.trick.top)) throw new GameError('too_small');
 

@@ -30,17 +30,19 @@ test('follow pair / straight / pair run of the same length', () => {
 });
 
 test('specials follow normals, weakest first', () => {
+  // LJ0 and BJ0 are mixed jokers (decks 2, only 2 of the 4 jokers): not a joker bomb,
+  // just two joker singles competing as normal singles.
   const hand = ['5S0', 'TS0', 'KS0', 'TH0', '3S0', '3H0', '3C0', '3D0', 'LJ0', 'BJ0'];
-  const list = hints(hand, identify(['2D0']));
+  const list = hints(hand, identify(['2D0']), 2);
   const types = list.map((h) => h.combo.type);
   assert.deepEqual(types.slice(0, 2), ['single', 'single']);
   const firstSpecial = types.findIndex((t) => t !== 'single');
-  assert.deepEqual(types.slice(firstSpecial), ['x510k', 'p510k', 'bomb', 'joker_bomb']);
+  assert.deepEqual(types.slice(firstSpecial), ['x510k', 'p510k', 'bomb']);
 });
 
 test('specials: joker bombs always come after all normal bombs', () => {
-  const hand = ['4S0', '4H0', '4C0', '4D0', '4S1', '4H1', '4C1', 'LJ0', 'BJ0'];
-  const list = hints(hand, identify(['3S0', '3H0', '3C0', '3D0']));
+  const hand = ['4S0', '4H0', '4C0', '4D0', '4S1', '4H1', '4C1', 'LJ0', 'LJ1', 'BJ0', 'BJ1'];
+  const list = hints(hand, identify(['3S0', '3H0', '3C0', '3D0']), 2);
   const types = list.map((h) => h.combo.type);
   assert.deepEqual(types[types.length - 1], 'joker_bomb');
   const sevenBombIndex = list.findIndex((h) => h.combo.type === 'bomb' && h.combo.length === 7);
@@ -48,8 +50,18 @@ test('specials: joker bombs always come after all normal bombs', () => {
   assert.ok(sevenBombIndex < types.length - 1, '7-bomb comes before the joker bomb');
 });
 
+test('joker pair beats a pair of 2s when nothing smaller works', () => {
+  const list = hints(['LJ0', 'LJ1', '3S0'], identify(['2S0', '2H0']), 2);
+  assert.deepEqual(list[0].cards, ['LJ0', 'LJ1']);
+});
+
+test('jokers never go into triple_pair', () => {
+  const list = hints(['LJ0', 'LJ1', 'LJ2', '4S0', '4H0'], null, 3);
+  assert.ok(!list.some((h) => h.combo.type === 'triple_pair'));
+});
+
 test('nothing beats -> empty list', () => {
-  assert.deepEqual(hints(['3S0', '4S0'], identify(['LJ0', 'BJ0', 'BJ1'])), []);
+  assert.deepEqual(hints(['3S0', '4S0'], identify(['LJ0', 'LJ1', 'BJ0', 'BJ1']), 2), []);
 });
 
 test('leading prefers multi-card combos and every candidate is legal', () => {

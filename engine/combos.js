@@ -3,6 +3,9 @@ import { valueOf, isJoker, SUIT_ORDER } from './cards.js';
 // Straights and pair runs may not go past K.
 export const MAX_RUN_VALUE = 13;
 
+// A joker bomb's level: a finite number (states stay JSON-safe) that outranks any 4n bomb.
+export const JOKER_BOMB_LEVEL = 100;
+
 // Every combo: { type, cards, length, cat, value, level, sub }
 // cat: 0 normal, 1 mixed 510K, 2 pure 510K, 3 bomb (incl. joker bombs).
 // level: bomb strength (card count; jokers count 3 each). sub: suit rank for pure 510K, 1 for joker bombs.
@@ -18,13 +21,24 @@ function countByValue(cards) {
 
 const isConsecutive = (values) => values.every((v, i) => i === 0 || v === values[i - 1] + 1);
 
-export function identify(cards) {
+// A joker bomb exists only when all 2*decks jokers of the game are played together.
+// Otherwise jokers are normal cards of value 16 (small, 'L') / 17 (big, 'B'): a same-kind
+// single/pair/triple is a normal combo. Mixed small+big jokers, or 4+ same-kind jokers
+// that aren't the full set, are invalid.
+export function identify(cards, decks = 2) {
   const n = cards.length;
   if (n === 0) return null;
   const jokers = cards.filter(isJoker).length;
   if (jokers === n) {
-    if (n === 1) return make('single', cards, 0, valueOf(cards[0]));
-    return make('joker_bomb', cards, 3, 0, n * 3, 1);
+    if (n === 2 * decks) return make('joker_bomb', cards, 3, 0, JOKER_BOMB_LEVEL, 1);
+    const ranks = new Set(cards.map((c) => c[0]));
+    if (ranks.size === 1 && n <= 3) {
+      const value = valueOf(cards[0]);
+      if (n === 1) return make('single', cards, 0, value);
+      if (n === 2) return make('pair', cards, 0, value);
+      return make('triple', cards, 0, value);
+    }
+    return null;
   }
   if (jokers > 0) return null;
 

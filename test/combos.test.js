@@ -39,8 +39,25 @@ test('510K: pure vs mixed', () => {
 test('bombs and joker bombs', () => {
   assert.equal(type(['7S0', '7H0', '7C0', '7D0']), 'bomb');
   assert.equal(identify(['7S0', '7H0', '7C0', '7D0', '7S1']).level, 5);
-  assert.equal(type(['LJ0', 'BJ0']), 'joker_bomb');
-  assert.equal(identify(['LJ0', 'BJ0', 'BJ1']).level, 9);
+
+  assert.equal(type(['LJ0', 'LJ1']), 'pair');
+  assert.ok(win(['BJ0', 'BJ1'], ['LJ0', 'LJ1']));
+  assert.ok(win(['BJ0', 'BJ1'], ['2S0', '2H0']));
+
+  assert.equal(identify(['LJ0', 'BJ0'], 2), null);
+
+  const fourJokers = ['LJ0', 'LJ1', 'BJ0', 'BJ1'];
+  const bomb8 = ['3S0', '3H0', '3C0', '3D0', '3S1', '3H1', '3C1', '3D1'];
+  assert.equal(identify(fourJokers, 2).type, 'joker_bomb');
+  assert.ok(beats(identify(fourJokers, 2), identify(bomb8)));
+  assert.equal(identify(fourJokers, 3), null);
+
+  assert.equal(identify(['LJ0', 'LJ1', 'LJ2'], 3).type, 'triple');
+
+  const sixJokers = ['LJ0', 'LJ1', 'LJ2', 'BJ0', 'BJ1', 'BJ2'];
+  const bomb12 = ['3S0', '3H0', '3C0', '3D0', '3S1', '3H1', '3C1', '3D1', '3S2', '3H2', '3C2', '3D2'];
+  assert.equal(identify(sixJokers, 3).type, 'joker_bomb');
+  assert.ok(beats(identify(sixJokers, 3), identify(bomb12, 3)));
 });
 
 test('normal combos only beat same type and length with higher value', () => {
@@ -53,7 +70,7 @@ test('normal combos only beat same type and length with higher value', () => {
   assert.ok(!win(['4S0', '5H0', '6D0', '7S0', '8C0'], ['3S0', '4H0', '5D0', '6S0', '7C0', '8H0']));
 });
 
-test('special ordering: x510k < p510k < 4-bomb < ... < 6-bomb < joker pair < 7-bomb', () => {
+test('special ordering: x510k < p510k < 4-bomb < ... < 9-bomb < joker bomb', () => {
   const x = ['5S0', 'TS1', 'KH0'];
   const pD = ['5D0', 'TD0', 'KD0'];
   const pS = ['5S0', 'TS0', 'KS0'];
@@ -61,11 +78,9 @@ test('special ordering: x510k < p510k < 4-bomb < ... < 6-bomb < joker pair < 7-b
   const b4big = ['AS0', 'AH0', 'AC0', 'AD0'];
   const b5 = ['3S0', '3H0', '3C0', '3D0', '3S1'];
   const b6 = ['2S0', '2H0', '2C0', '2D0', '2S1', '2H1'];
-  const j2 = ['LJ0', 'LJ1'];
   const b7 = ['3S0', '3H0', '3C0', '3D0', '3S1', '3H1', '3C1'];
-  const b8 = ['3S0', '3H0', '3C0', '3D0', '3S1', '3H1', '3C1', '3D1'];
-  const j3 = ['LJ0', 'LJ1', 'BJ0'];
   const b9 = ['3S0', '3H0', '3C0', '3D0', '3S1', '3H1', '3C1', '3D1', '3S2'];
+  const jokerBomb = ['LJ0', 'LJ1', 'BJ0', 'BJ1'];
 
   assert.ok(win(x, ['2S0', '2H0', '2D0', 'AS0', 'AH0']));
   assert.ok(win(x, ['9S0', 'TH0', 'JD0', 'QS0', 'KC0']));
@@ -76,11 +91,8 @@ test('special ordering: x510k < p510k < 4-bomb < ... < 6-bomb < joker pair < 7-b
   assert.ok(win(b4, pS));
   assert.ok(win(b4big, b4));
   assert.ok(win(b5, b4big));
-  assert.ok(win(j2, b6));
-  assert.ok(!win(b6, j2));
-  assert.ok(win(b7, j2));
-  assert.ok(win(j3, b8));
-  assert.ok(win(j3, b9), 'a 9-bomb ties the level of 3 jokers, but the joker bomb outranks it');
-  assert.ok(!win(b9, j3));
-  assert.ok(!win(['LJ0', 'BJ0'], ['LJ1', 'BJ1']), 'equal joker bombs do not beat');
+  assert.ok(win(b6, b5));
+  assert.ok(win(b7, b6));
+  assert.ok(win(jokerBomb, b9), 'a joker bomb outranks even a 9-bomb');
+  assert.ok(!win(b9, jokerBomb));
 });

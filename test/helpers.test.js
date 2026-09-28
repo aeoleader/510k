@@ -38,7 +38,7 @@ test('highlights: big bomb, steal, big trick, gift, team bomb, auto, sweep', () 
       ['5S0', 'TS0', 'KH0', '4S0'],
       ['TH0', '4H0'],
     ],
-    teams: [0, 1, 0, 1], leader: 0,
+    teams: [0, 1, 0, 1], leader: 0, decks: 2,
   });
   const { events } = replay(s, [
     { seat: 0, type: 'play', cards: ['KS0'] },

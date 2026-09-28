@@ -4,10 +4,11 @@ import { identify, beats, compareStrength, MAX_RUN_VALUE } from './combos.js';
 // Order in which a leader's options are offered: multi-card combos first.
 const LEAD_ORDER = { straight: 0, pairs: 1, triple_pair: 2, single: 3, pair: 4, triple: 5 };
 
+// Jokers group by value too (16 small, 17 big), so same-kind singles/pairs/triples
+// of jokers come from the same generators as any other value.
 function groupByValue(hand) {
   const groups = new Map();
   for (const c of [...hand].sort(compareCards)) {
-    if (isJoker(c)) continue;
     const v = valueOf(c);
     if (!groups.has(v)) groups.set(v, []);
     groups.get(v).push(c);
@@ -62,10 +63,11 @@ function sameKind(groups, k) {
 
 function triplePairs(groups) {
   const out = [];
+  // Jokers never go into triple_pair: skip joker values (16/17) for both the triple and the pair.
   for (const [t, g] of groups) {
-    if (g.length < 3) continue;
+    if (t > 15 || g.length < 3) continue;
     const pair = [...groups]
-      .filter(([v, p]) => v !== t && p.length >= 2)
+      .filter(([v, p]) => v !== t && v <= 15 && p.length >= 2)
       .map(([, p]) => p.slice(0, 2))
       .sort((a, b) => compareCost(costOf(groups, a), costOf(groups, b)) || valueOf(a[0]) - valueOf(b[0]))[0];
     if (pair) out.push([...g.slice(0, 3), ...pair]);
@@ -73,16 +75,11 @@ function triplePairs(groups) {
   return out;
 }
 
-function singles(groups, jokers) {
-  const out = [...groups.values()].map((g) => [g[0]]);
-  const small = jokers.find((c) => c[0] === 'L');
-  const big = jokers.find((c) => c[0] === 'B');
-  if (small) out.push([small]);
-  if (big) out.push([big]);
-  return out;
+function singles(groups) {
+  return [...groups.values()].map((g) => [g[0]]);
 }
 
-function specials(groups, jokers) {
+function specials(groups, jokers, decks) {
   const out = [];
   const fives = groups.get(5) ?? [];
   const tens = groups.get(10) ?? [];
@@ -96,25 +93,30 @@ function specials(groups, jokers) {
     const k = kings.find((c) => c[1] === suit);
     if (f && t && k) out.push([f, t, k]);
   }
-  for (const g of groups.values()) for (let k = 4; k <= g.length; k++) out.push(g.slice(0, k));
-  for (let k = 2; k <= jokers.length; k++) out.push(jokers.slice(0, k));
+  // Bombs are non-joker only (jokers never form a plain bomb); a joker bomb exists
+  // only when the whole set of jokers is played together.
+  for (const [v, g] of groups) {
+    if (v > 15) continue;
+    for (let k = 4; k <= g.length; k++) out.push(g.slice(0, k));
+  }
+  if (jokers.length === 2 * decks) out.push([...jokers]);
   return out;
 }
 
 // Legal plays for `hand` against `top` (null when leading), best recommendation first.
 // Returns [{ cards, combo }].
-export function hints(hand, top = null) {
+export function hints(hand, top = null, decks = 2) {
   const groups = groupByValue(hand);
   const jokers = hand.filter(isJoker).sort(compareCards);
   let normal = [];
   if (!top) {
     normal = [
       ...runs(groups, 1, 5), ...runs(groups, 2, 3), ...triplePairs(groups),
-      ...singles(groups, jokers), ...sameKind(groups, 2), ...sameKind(groups, 3),
+      ...singles(groups), ...sameKind(groups, 2), ...sameKind(groups, 3),
     ];
   } else if (top.cat === 0) {
     const byType = {
-      single: () => singles(groups, jokers),
+      single: () => singles(groups),
       pair: () => sameKind(groups, 2),
       triple: () => sameKind(groups, 3),
       triple_pair: () => triplePairs(groups),
@@ -129,7 +131,7 @@ export function hints(hand, top = null) {
     const key = [...cards].sort().join();
     if (seen.has(key)) return [];
     seen.add(key);
-    const combo = identify(cards);
+    const combo = identify(cards, decks);
     if (!combo || !beats(combo, top)) return [];
     return [{ cards, combo, cost: costOf(groups, cards) }];
   });
@@ -143,7 +145,7 @@ export function hints(hand, top = null) {
     || b.combo.length - a.combo.length);
   // Specials order: 杂510K, 纯510K, bombs (weakest first), then joker bombs last.
   const isJokerBomb = (h) => h.combo.type === 'joker_bomb' ? 1 : 0;
-  const special = toCandidates(specials(groups, jokers)).sort((a, b) =>
+  const special = toCandidates(specials(groups, jokers, decks)).sort((a, b) =>
     isJokerBomb(a) - isJokerBomb(b) || compareStrength(a.combo, b.combo));
   return [...normals, ...special].map(({ cards, combo }) => ({ cards, combo }));
 }

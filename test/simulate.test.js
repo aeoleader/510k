@@ -15,7 +15,7 @@ function playHand(match) {
   const hands = completeReturns(prepared, prepared.pendingReturns.map((r) => ({
     ...r, card: lowestCard(prepared.hands[r.from]),
   })));
-  const initial = createHandState({ hands, teams: match.teams, leader: prepared.leader });
+  const initial = createHandState({ hands, teams: match.teams, leader: prepared.leader, decks: match.decks });
   let state = initial;
   const actions = [];
   const events = [];
@@ -30,6 +30,7 @@ function playHand(match) {
       ...botAction({
         hand: state.hands[seat],
         top,
+        decks: match.decks,
         topIsTeammate: Boolean(match.teams) && top !== null && match.teams[topSeat] === match.teams[seat] && topSeat !== seat,
         trickPoints: state.trick ? sumPoints(state.trick.cards) : 0,
         opponentMinCards: Math.min(...opponents.map((h) => h.length)),

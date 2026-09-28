@@ -5,8 +5,8 @@ const OPPONENT_DANGER_CARDS = 5;
 
 // Simple bot / auto-play policy shared by bots and disconnected players.
 // ctx: { hand, top, topIsTeammate, trickPoints, opponentMinCards }
-export function botAction({ hand, top, topIsTeammate = false, trickPoints = 0, opponentMinCards = Infinity }) {
-  const options = hints(hand, top);
+export function botAction({ hand, top, decks = 2, topIsTeammate = false, trickPoints = 0, opponentMinCards = Infinity }) {
+  const options = hints(hand, top, decks);
   if (!top) return { type: 'play', cards: options[0].cards };
   if (topIsTeammate) return { type: 'pass' };
   const normal = options.find((o) => o.combo.cat === 0);
