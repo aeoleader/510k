@@ -5,7 +5,8 @@
   "description": "5-10-K online card game for 4-8 players.",
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "start": "node server/index.js"
   },
   "engines": {
     "node": ">=22"

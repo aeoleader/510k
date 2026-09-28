@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "510k",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server/index.js"],
+      "env": { "PORT": "3210", "HOST": "127.0.0.1" },
+      "port": 3210
+    }
+  ]
+}
