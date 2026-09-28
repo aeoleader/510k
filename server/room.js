@@ -3,6 +3,7 @@ import { defaultDecks, sumPoints, deal, MIN_PLAYERS, MAX_PLAYERS } from '../engi
 import { createHandState, apply, ranking, GameError } from '../engine/game.js';
 import { createMatch, prepareHand, completeReturns, recordHand, isMatchOver, handSeed, HANDS_PER_MATCH } from '../engine/match.js';
 import { botAction, botContext } from '../engine/bot.js';
+import { hints, smallestSingle } from '../engine/hint.js';
 import { computeRatingDeltas } from '../engine/rating.js';
 import { findHighlights } from '../engine/highlights.js';
 import { counterView } from '../engine/counter.js';
@@ -15,7 +16,10 @@ export const DEFAULT_DELAYS = {
   tributeMs: 5000, returnRevealMs: 3000, dealRoundMs: 120, claimGraceMs: 3000,
   restoreGraceMs: 20000, // after a server restart, humans count as present this long so they can reconnect
   reclaimOfflineMs: 30000, // a guest seat that is only offline may be taken back by name after this long
+  hostAwayMs: 60000, // while paused, a host offline this long hands the host role to an online human
 };
+// Rescheduling attempts per phase after an automatic action failed, so a room never wedges nor spins.
+const TIMER_RETRIES = 3;
 // A bot holding the black 3 shows it this long after it was dealt to them.
 const BOT_CLAIM_MIN_MS = 1000;
 const BOT_CLAIM_MAX_MS = 2500;
@@ -39,6 +43,7 @@ export class Room {
   constructor({
     code, delays = DEFAULT_DELAYS, timers = globalThis, now = Date.now, random = Math.random, onChange = () => {},
     accountView = () => null, onMatchOver = () => {}, counterFor = () => false,
+    botPolicy = (hand, seat) => botAction(botContext(hand, seat)),
   }) {
     this.code = code;
     this.delays = { ...DEFAULT_DELAYS, ...delays }; // callers may pass only some delays
@@ -50,6 +55,10 @@ export class Room {
     this.counterFor = counterFor; // userId -> whether an admin enabled the card counter for them
     this.playedCards = []; // every card played this hand, for card counters
     this.onMatchOver = onMatchOver;
+    this.botPolicy = botPolicy; // (hand state, seat) -> action; tests may pass a broken one
+    this.botPolicyFailed = false; // logged once per room
+    this.timerRetry = { phase: null, n: 0 };
+    this.turnClock = null; // { key, deadline, span } of the human turn clock running now, kept across reconnects
     this.startedAt = null;
     this.ratingResult = null;
     this.handLog = []; // one entry per finished hand of the current match, for replays
@@ -209,7 +218,7 @@ export class Room {
     if (was === isOnline) return;
     if (isOnline) this.offlineSince.delete(playerId);
     else this.offlineSince.set(playerId, this.now());
-    if (this.waitsOn(playerId)) this.schedule();
+    if (this.waitsOn(playerId) || this.paused) this.schedule(); // paused: re-check whether the host is away
     if (this.readyToAdvance()) return this.advanceAfterHand();
     this.changed();
   }
@@ -316,8 +325,13 @@ export class Room {
 
   readyToAdvance() {
     if (this.phase !== 'hand_over' || this.paused) return false;
-    const waiting = this.players.flatMap((p, seat) => (!p.isBot && !p.leftEarly && this.isPresent(p) ? [seat] : []));
+    const waiting = this.readyWaiting();
     return waiting.length > 0 && waiting.every((seat) => this.ready.has(seat));
+  }
+
+  // Seats the next hand waits on: humans still in the match who are present.
+  readyWaiting() {
+    return this.players.flatMap((p, seat) => (!p.isBot && !p.leftEarly && this.isPresent(p) ? [seat] : []));
   }
 
   startHand() {
@@ -352,11 +366,16 @@ export class Room {
     this.changed();
   }
 
-  // Rounds revealed so far; frozen while paused.
+  // Rounds revealed so far; frozen while paused and while held after a restore.
   dealRounds() {
-    const at = this.paused ? this.pausedAt : this.now();
+    const at = this.dealClock();
     const rounds = Math.floor((at - this.dealing.startedAt) / this.delays.dealRoundMs);
     return Math.max(0, Math.min(this.dealing.total, rounds));
+  }
+
+  // The deal clock: stands still while paused and until `holdUntil` (the reconnect grace after a restore).
+  dealClock() {
+    return Math.max(this.paused ? this.pausedAt : this.now(), this.dealing.holdUntil ?? -Infinity);
   }
 
   dealEndAt() {
@@ -615,8 +634,8 @@ export class Room {
     this.paused = true;
     this.pausedAt = now;
     this.pausedRemaining = this.deadline === null ? null : Math.max(0, this.deadline - now);
-    this.clearTimer();
     this.deadline = null; // deadlineSpan stays, so the countdown keeps its scale after resuming
+    this.schedule(); // only the host-away check runs while paused
     this.say('房主暂停了游戏');
     this.changed();
   }
@@ -630,6 +649,7 @@ export class Room {
       const shift = now - this.pausedAt;
       this.dealing.startedAt += shift;
       for (const seat of Object.keys(this.dealing.claimAt)) this.dealing.claimAt[seat] += shift;
+      if (this.dealing.holdUntil !== undefined) this.dealing.holdUntil += shift;
     }
     if (this.pausedRemaining !== null) this.deadline = now + this.pausedRemaining;
     Object.assign(this, { paused: false, pausedAt: null, pausedRemaining: null });
@@ -641,6 +661,24 @@ export class Room {
 
   requireRunning() {
     if (this.paused) throw new HttpError(409, 'paused');
+  }
+
+  // While paused, nobody but the host can resume: a host gone too long hands the role to an online human.
+  scheduleHostCheck() {
+    const host = this.players.find((p) => p.id === this.hostId);
+    if (!host || this.online.has(host.id)) return;
+    const away = this.now() - (this.offlineSince.get(host.id) ?? this.now());
+    this.setTimer(Math.max(0, this.delays.hostAwayMs - away), () => this.hostAway());
+  }
+
+  hostAway() {
+    const host = this.players.find((p) => p.id === this.hostId);
+    if (!this.paused || !host || this.online.has(host.id)) return;
+    // Only hand over to someone who can act now; otherwise wait until a human comes online (setOnline re-checks).
+    if (!this.players.some((p) => !p.isBot && !p.leftEarly && !p.gone && p.id !== host.id && this.online.has(p.id))) return;
+    this.passHost(host.id);
+    this.say(`房主离线，${this.players.find((p) => p.id === this.hostId).name} 成为房主`);
+    this.changed();
   }
 
   // ---- automatic actions ---------------------------------------------------
@@ -658,7 +696,7 @@ export class Room {
   // `resumed`: keep the deadline restored by resume() instead of starting a fresh turn clock.
   schedule(resumed = false) {
     this.clearTimer();
-    if (this.paused) return;
+    if (this.paused) return this.scheduleHostCheck();
     const untilDeadline = () => Math.max(0, this.deadline - this.now());
     if (this.phase === 'dealing') {
       const rounds = this.dealRounds();
@@ -681,11 +719,21 @@ export class Room {
       } else if (this.noTimer()) {
         this.setDeadline(null);
       } else {
-        if (!resumed || this.deadline === null) {
+        const online = this.online.has(this.players[seat].id);
+        const key = `${this.match.handNo}:${this.actions.length}`; // this very turn
+        const running = this.turnClock?.key === key && this.turnClock.deadline > this.now() ? this.turnClock : null;
+        if (resumed && this.deadline !== null) {
+          // Keep the deadline restored by resume() or a restore.
+        } else if (running) {
+          // Reconnecting mid-turn keeps the clock that was already running instead of starting a fresh one.
+          this.deadline = running.deadline;
+          this.deadlineSpan = running.span;
+        } else {
           // Offline during the reconnect grace: the turn clock starts only once the grace is over.
-          const graceLeft = this.online.has(this.players[seat].id) ? 0 : Math.max(0, (this.graceUntil ?? 0) - this.now());
+          const graceLeft = online ? 0 : Math.max(0, (this.graceUntil ?? 0) - this.now());
           this.setDeadline(graceLeft + this.turnMs());
         }
+        if (online) this.turnClock = { key, deadline: this.deadline, span: this.deadlineSpan };
         this.setTimer(untilDeadline(), () => this.autoPlay(seat));
       }
     } else if (this.phase === 'hand_over') {
@@ -704,9 +752,20 @@ export class Room {
   // Bots, absent seats and timed-out turns all play the same policy.
   autoPlay(seat) {
     if (this.phase !== 'playing' || this.hand.turn !== seat) return;
-    const choice = botAction(botContext(this.hand, seat));
+    const choice = this.botPolicy(this.hand, seat);
     // `auto` marks a human seat played by the server (timeout, offline, left); bots just play.
-    this.act({ seat, ...choice, auto: !this.players[seat].isBot });
+    const auto = !this.players[seat].isBot;
+    try {
+      this.act({ seat, ...choice, auto });
+    } catch (err) {
+      if (!(err instanceof HttpError || err instanceof GameError)) throw err;
+      if (!this.botPolicyFailed) console.error(`room ${this.code}: bot policy chose an illegal move, falling back`, err);
+      this.botPolicyFailed = true;
+      // Leading: the first legal play (or the smallest single); following: pass.
+      if (this.hand.trick) return this.act({ seat, type: 'pass', auto });
+      const hand = this.hand.hands[seat];
+      this.act({ seat, type: 'play', cards: hints(hand, null, this.hand.decks)[0]?.cards ?? smallestSingle(hand), auto });
+    }
   }
 
   setDeadline(ms) {
@@ -722,8 +781,23 @@ export class Room {
         fn();
       } catch (err) {
         console.error(`room ${this.code}: automatic action failed`, err);
+        this.retryAfterFailure();
       }
     }, ms);
+  }
+
+  // Schedule the pending automatic action again, a few times per phase at most, so one failure
+  // cannot wedge the room and a persistent one cannot spin.
+  retryAfterFailure() {
+    if (this.timer) return; // the failed action already scheduled something
+    if (this.timerRetry.phase !== this.phase) this.timerRetry = { phase: this.phase, n: 0 };
+    if (this.timerRetry.n >= TIMER_RETRIES) return;
+    this.timerRetry.n += 1;
+    try {
+      this.schedule(true);
+    } catch (err) {
+      console.error(`room ${this.code}: rescheduling failed`, err);
+    }
   }
 
   clearTimer() {
@@ -743,8 +817,8 @@ export class Room {
   // timers are never saved, fromSnapshot() schedules them again.
   toSnapshot() {
     const now = this.now();
-    const ref = this.paused ? this.pausedAt : now; // the deal clock is frozen while paused
     const d = this.dealing;
+    const ref = d ? this.dealClock() : now; // the deal clock is frozen while paused or held
     return structuredClone({
       format: 1,
       code: this.code,
@@ -868,6 +942,14 @@ export class Room {
       this.deadline = this.now() + left + grace;
       this.deadlineSpan = left + grace;
     }
+    if (!this.paused && this.phase === 'dealing') {
+      // Hold the deal for the grace: nothing more is dealt and no bot claims until humans can see their cards.
+      const d = this.dealing;
+      d.holdUntil = this.now() + grace;
+      d.startedAt += grace;
+      for (const seat of Object.keys(d.claimAt)) d.claimAt[seat] += grace;
+      if (this.deadline !== null) this.deadline += grace; // the claim grace after the deal
+    }
     this.graceTimer = this.timers.setTimeout(() => {
       this.graceTimer = null;
       this.graceUntil = null;
@@ -952,6 +1034,10 @@ export class Room {
       dealRoundMs: this.phase === 'dealing' ? this.delays.dealRoundMs : null,
       claimedBy: this.claimedBy,
       ready: [...this.ready].sort((a, b) => a - b),
+      // Who the next hand waits on, by the same rule as readyToAdvance() (the restore grace counts offline humans).
+      readyWaiting: this.phase === 'hand_over'
+        ? ((seats) => ({ ready: seats.filter((s) => this.ready.has(s)).length, needed: seats.length }))(this.readyWaiting())
+        : null,
       teams: this.match?.teams ?? null,
       handNo: this.match ? Math.min(this.match.handNo + (this.phase === 'hand_over' || this.phase === 'match_over' ? 0 : 1), HANDS_PER_MATCH) : 0,
       handsPerMatch: HANDS_PER_MATCH,

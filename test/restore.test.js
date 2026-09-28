@@ -190,13 +190,52 @@ test('dealing without a claim: revealed rounds and bot claim times carry over', 
   assert.equal(copy.dealRounds(), 5);
   assert.deepEqual(copy.viewFor(host.id).you.hand, room.viewFor(host.id).you.hand);
   for (const seat of Object.keys(room.dealing.claimAt)) {
-    assert.equal(copy.dealing.claimAt[seat] - c.now(), room.dealing.claimAt[seat] - clock.now());
+    assert.equal(copy.dealing.claimAt[seat] - c.now(), room.dealing.claimAt[seat] - clock.now() + GRACE, 'bot claims wait out the grace too');
   }
   runUntil(clock, () => room.phase !== 'dealing', 50);
   runUntil(c, () => copy.phase !== 'dealing', 50);
   assert.equal(copy.claimedBy, room.claimedBy);
   assert.equal(copy.prepared.leader, room.prepared.leader);
   room.destroy();
+  copy.destroy();
+});
+
+test('dealing: the deal holds during the grace so reconnecting humans see their cards and can claim', () => {
+  const { room, clock, host } = setup({ humans: ['甲'], bots: 3, dealMode: true });
+  room.start(host.id);
+  clock.advance(550);
+  const { room: copy, clock: c } = restart(room);
+  const version = copy.version;
+  c.advance(GRACE - 1);
+  assert.equal(copy.dealRounds(), 5, 'nothing more is dealt during the grace');
+  assert.equal(copy.claimedBy, null, 'no bot claims during the grace');
+  assert.equal(copy.version, version);
+  copy.setOnline(host.id, true);
+  assert.deepEqual(copy.viewFor(host.id).you.hand, room.viewFor(host.id).you.hand);
+  c.advance(1 + DELAYS.dealRoundMs);
+  assert.equal(copy.dealRounds(), 6, 'dealing carries on after the grace');
+  // A snapshot taken during the hold keeps the frozen count.
+  const { room: again } = restart(copy);
+  assert.equal(again.dealRounds(), 6);
+  again.destroy();
+  room.destroy();
+});
+
+test('dealing: the claim grace after the deal is shifted by the restore grace', () => {
+  const { room, clock, host } = setup({ humans: ['甲', '乙', '丙', '丁'], dealMode: true });
+  room.start(host.id);
+  clock.advance(room.dealing.total * DELAYS.dealRoundMs);
+  assert.equal(room.dealing.ended, true);
+  const left = room.deadline - clock.now();
+  const { room: copy, clock: c } = restart(room);
+  assert.equal(copy.deadline, c.now() + left + GRACE);
+  c.advance(GRACE + left - 1);
+  assert.equal(copy.phase, 'dealing', 'humans can still show the black 3');
+  const holder = copy.dealing.order.findIndex((cards) => cards.some((id) => id.startsWith('3S')));
+  if (holder >= 0) {
+    copy.claimThree(copy.players[holder].id);
+    assert.equal(copy.prepared.leader, holder);
+  }
   copy.destroy();
 });
 
@@ -288,6 +327,7 @@ test('hand_over: the ready set survives; everyone counts as present during the g
   assert.deepEqual(copy.result, room.result);
   copy.setOnline(people[0].id, true);
   assert.equal(copy.phase, 'hand_over', '乙 may still come back and is not ready yet');
+  assert.deepEqual(copy.viewFor(people[0].id).readyWaiting, { ready: 1, needed: 2 }, 'the offline 乙 still counts during the grace');
   c.advance(GRACE);
   assert.notEqual(copy.phase, 'hand_over', 'after the grace only 甲 counts, and 甲 is ready');
   assert.equal(copy.match.handNo, 1);

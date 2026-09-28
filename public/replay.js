@@ -211,7 +211,10 @@ function renderTable(h) {
   }).join('');
   const trickPts = s.trick ? sumPoints(s.trick.cards) : 0;
   let info;
-  if (state.step === 0) info = `${esc(shortName(d.players[h.leader].name))} 先出`;
+  if (state.step === 0) {
+    const claimer = h.tribute.claimedBy;
+    info = `${claimer !== null && claimer !== undefined ? `${esc(shortName(d.players[claimer].name))} 亮黑3，` : ''}${esc(shortName(d.players[h.leader].name))} 先出`;
+  }
   else if (s.over) info = '本局结束';
   else if (snap.closed && snap.lastTrick) info = `${esc(shortName(d.players[snap.lastTrick.seat].name))} 收下 ${snap.lastTrick.points} 分`;
   else if (snap.top) info = `${esc(shortName(d.players[snap.top.seat].name))} 的 ${TYPE_LABEL[snap.top.type] ?? ''} 最大，桌面 ${trickPts} 分`;

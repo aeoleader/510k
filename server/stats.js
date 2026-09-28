@@ -4,6 +4,7 @@ import { publicAccount } from './accounts.js';
 const RECENT_MATCHES = 20;
 const MATCHES_PAGE_SIZE = 20;
 const MATCHES_BATCH = 50; // matches fetched per DB round-trip while scanning for an outcome filter
+const MATCHES_SCAN_LIMIT = 200; // matches examined per request; a sparse filter continues on the next request
 const STATS_WINDOW = 200; // matches considered for rates and partners
 const BEST_PARTNER_MIN_MATCHES = 3;
 const BOMB_TYPES = ['bomb', 'joker_bomb'];
@@ -244,23 +245,27 @@ export class Stats {
   }
 
   // Full match history, newest first, paginated by match id cursor (`before`, exclusive) with an
-  // optional outcome filter. Scans in batches since outcome is derived, not stored.
+  // optional outcome filter. Scans in batches since outcome is derived, not stored, and at most
+  // MATCHES_SCAN_LIMIT matches per request. `total` counts every match, so it is only given unfiltered
+  // (null with a filter: counting outcomes would mean scanning the whole history).
   matches(username, { before = null, outcome = null } = {}) {
     const user = typeof username === 'string' ? this.q.userByName.get(username) : null;
     if (!user) throw new HttpError(404, 'no_user');
-    const total = this.q.matchesCount.get(user.id).n;
+    const total = outcome ? null : this.q.matchesCount.get(user.id).n;
 
     const result = [];
-    let cursor = before;
+    let cursor = before; // id of the last match examined
+    let scanned = 0;
     let exhausted = false;
-    while (result.length <= MATCHES_PAGE_SIZE && !exhausted) {
+    while (result.length <= MATCHES_PAGE_SIZE && !exhausted && scanned < MATCHES_SCAN_LIMIT) {
+      const limit = Math.min(MATCHES_BATCH, MATCHES_SCAN_LIMIT - scanned);
       const batch = cursor === null
-        ? this.q.matchesPageAll.all(user.id, MATCHES_BATCH)
-        : this.q.matchesPageBefore.all(user.id, cursor, MATCHES_BATCH);
-      if (batch.length === 0) break;
-      if (batch.length < MATCHES_BATCH) exhausted = true;
-      cursor = batch[batch.length - 1].id;
+        ? this.q.matchesPageAll.all(user.id, limit)
+        : this.q.matchesPageBefore.all(user.id, cursor, limit);
+      if (batch.length < limit) exhausted = true;
       for (const m of batch) {
+        scanned += 1;
+        cursor = m.id;
         const players = this.q.players.all(m.id);
         const handRows = this.q.hands.all(m.id).map((h) => ({ ...h, result: parse(h.result) }));
         const teamSweeps = sweepsByTeam(handRows);
@@ -273,7 +278,10 @@ export class Stats {
 
     // The cursor for the next page is the id of the last match on THIS page (queries use `id < cursor`),
     // not the id of the extra lookahead match itself, which must still be included on the next page.
-    const nextBefore = result.length > MATCHES_PAGE_SIZE ? result[MATCHES_PAGE_SIZE - 1].matchId : null;
+    // When the scan limit stopped a sparse filter early, the next page continues from where the scan stopped.
+    let nextBefore = null;
+    if (result.length > MATCHES_PAGE_SIZE) nextBefore = result[MATCHES_PAGE_SIZE - 1].matchId;
+    else if (!exhausted && scanned >= MATCHES_SCAN_LIMIT) nextBefore = cursor;
     return { matches: result.slice(0, MATCHES_PAGE_SIZE), nextBefore, total };
   }
 }

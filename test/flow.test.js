@@ -563,3 +563,105 @@ test('a failed deal finish leaves the dealing state intact', () => {
   assert.ok(room.dealing);
   room.destroy();
 });
+
+// ---- robustness: host away while paused, illegal bot moves, failing timers, reconnects -------------
+
+test('paused with the host offline too long: an online human becomes host', () => {
+  const { room, clock, host, people } = setup({ humans: ['甲', '乙', '丙', '丁'], online: ['甲', '乙'] });
+  room.start(host.id);
+  room.pause(host.id);
+  room.setOnline(host.id, false);
+  clock.advance(DEFAULT_DELAYS.hostAwayMs - 1);
+  assert.equal(room.hostId, host.id);
+  clock.advance(1);
+  assert.equal(room.hostId, people[1].id);
+  assert.ok(room.log.some((l) => l.text === '房主离线，乙 成为房主'));
+  assert.equal(room.paused, true);
+  room.resume(people[1].id);
+  assert.equal(room.paused, false);
+  room.destroy();
+});
+
+test('paused with the host away and nobody online: the host role moves once someone comes online', () => {
+  const { room, clock, host, people } = setup({ humans: ['甲', '乙', '丙', '丁'], online: ['甲'] });
+  room.start(host.id);
+  room.pause(host.id);
+  room.setOnline(host.id, false);
+  clock.advance(2 * DEFAULT_DELAYS.hostAwayMs);
+  assert.equal(room.hostId, host.id, 'nobody online to take over');
+  room.setOnline(people[2].id, true);
+  clock.advance(0);
+  assert.equal(room.hostId, people[2].id);
+  room.destroy();
+});
+
+test('the host coming back before hostAwayMs keeps the role', () => {
+  const { room, clock, host } = setup({ online: ['甲', '乙'] });
+  room.start(host.id);
+  room.pause(host.id);
+  room.setOnline(host.id, false);
+  clock.advance(DEFAULT_DELAYS.hostAwayMs - 1000);
+  room.setOnline(host.id, true);
+  clock.advance(10 * DEFAULT_DELAYS.hostAwayMs);
+  assert.equal(room.hostId, host.id);
+  room.destroy();
+});
+
+const quietly = (fn) => {
+  const error = console.error;
+  console.error = () => {};
+  try { return fn(); } finally { console.error = error; }
+};
+
+test('an illegal move from the bot policy falls back to a legal one and the hand goes on', () => {
+  const { room, clock, host } = setup({ humans: ['甲'], online: [], bots: 3 });
+  room.start(host.id);
+  room.botPolicy = () => ({ type: 'play', cards: ['NOPE'] });
+  quietly(() => {
+    for (let i = 0; i < 2000 && room.phase === 'playing'; i++) clock.advance(DELAYS.botMs);
+  });
+  assert.equal(room.phase, 'hand_over', 'the hand was played to the end');
+  assert.ok(room.actions.length > 0);
+  room.destroy();
+});
+
+test('a failing automatic action is rescheduled a few times, then stops instead of spinning', () => {
+  const { room, clock, host } = setup({ humans: ['甲'], online: [], bots: 3 });
+  room.start(host.id);
+  let calls = 0;
+  room.botPolicy = () => { calls += 1; throw new TypeError('boom'); };
+  quietly(() => clock.advance(100 * DELAYS.botMs));
+  assert.equal(calls, 4, 'the first try and three retries');
+  assert.equal(clock.pending.size, 0);
+  // A transient failure: the retry plays on.
+  const { room: other, clock: c, host: h } = setup({ humans: ['甲'], online: [], bots: 3 });
+  other.start(h.id);
+  let fails = 1;
+  const real = other.botPolicy;
+  other.botPolicy = (hand, seat) => { if (fails-- > 0) throw new TypeError('once'); return real(hand, seat); };
+  quietly(() => c.advance(3 * DELAYS.botMs));
+  assert.ok(other.actions.length >= 1);
+  room.destroy();
+  other.destroy();
+});
+
+test('reconnecting mid-turn keeps the running turn clock', () => {
+  const { room, clock, host } = setup({ humans: ['甲'], bots: 3 });
+  room.start(host.id);
+  for (let i = 0; i < 400 && room.hand.turn !== 0; i++) clock.advance(50);
+  assert.equal(room.hand.turn, 0);
+  const deadline = room.deadline;
+  const played = room.actions.length;
+  clock.advance(2000);
+  for (let i = 0; i < 2; i++) {
+    room.setOnline(host.id, false);
+    clock.advance(100);
+    room.setOnline(host.id, true);
+    assert.equal(room.deadline, deadline, 'the deadline is not extended');
+  }
+  clock.advance(deadline - clock.now() - 1);
+  assert.equal(room.actions.length, played);
+  clock.advance(1);
+  assert.equal(room.actions.length, played + 1, 'timed out on the original deadline');
+  room.destroy();
+});

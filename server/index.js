@@ -29,10 +29,10 @@ server.listen(port, host, () => {
 // On stop (systemd sends SIGTERM): refuse new connections, freeze rooms, close streams, save rooms, exit.
 // Everything runs synchronously, so no request can slip in between saving and exiting.
 let stopping = false;
-function shutdown(signal) {
+function shutdown(signal, exitCode = 0) {
   if (stopping) return;
   stopping = true;
-  let code = 0;
+  let code = exitCode;
   try {
     server.close();
     server.closeIdleConnections();
@@ -52,3 +52,12 @@ function shutdown(signal) {
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
+
+// A bug that escapes every handler: log it, save the rooms like on SIGTERM, and exit non-zero so systemd restarts us.
+function crash(kind, err) {
+  console.error(`${kind}:`, err);
+  if (stopping) return; // already shutting down
+  shutdown(kind, 1);
+}
+process.on('uncaughtException', (err) => crash('uncaughtException', err));
+process.on('unhandledRejection', (err) => crash('unhandledRejection', err));

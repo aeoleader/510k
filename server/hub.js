@@ -252,7 +252,7 @@ export class Hub {
     mine.add(res);
     this.streams += 1;
     this.send(res, room.viewFor(player.id));
-    room.setOnline(player.id, true);
+    this.setOnline(room, player.id, true);
     const keepalive = setInterval(() => {
       if (!res.writableEnded && !res.destroyed) res.write(': keepalive\n\n');
     }, KEEPALIVE_MS);
@@ -267,12 +267,21 @@ export class Hub {
       set.delete(res);
       if (set.size === 0) {
         byPlayer.delete(player.id);
-        if (!this.stopped && this.rooms.get(room.code) === room) room.setOnline(player.id, false);
+        if (!this.stopped && this.rooms.get(room.code) === room) this.setOnline(room, player.id, false);
       }
     };
     req.on('close', close);
     res.on('close', close);
     res.on('error', close);
+  }
+
+  // Runs from stream open/close handlers, outside any request: a room error must not crash the process.
+  setOnline(room, playerId, isOnline) {
+    try {
+      room.setOnline(playerId, isOnline);
+    } catch (err) {
+      console.error(`room ${room.code}: marking ${playerId} ${isOnline ? 'online' : 'offline'} failed`, err);
+    }
   }
 
   send(res, view) {

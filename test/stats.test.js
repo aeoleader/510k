@@ -113,7 +113,8 @@ test('matches(): outcome filter only returns matching matches, scanning past non
   const wins = stats.matches('Me1', { outcome: 'win' });
   assert.equal(wins.matches.length, 2);
   assert.ok(wins.matches.every((m) => m.outcome === 'win'));
-  assert.equal(wins.total, 4, 'total counts all matches, unaffected by the filter');
+  assert.equal(wins.total, null, 'no total with a filter: it would need a full scan');
+  assert.equal(stats.matches('Me1').total, 4);
   const losses = stats.matches('Me1', { outcome: 'loss' });
   assert.equal(losses.matches.length, 1);
   assert.equal(losses.matches[0].outcome, 'loss');
@@ -125,4 +126,18 @@ test('matches(): rows match the shape of profile().recent (shared row builder)',
   const p = stats.profile('Me1');
   const m = stats.matches('Me1');
   assert.deepEqual(m.matches[0], p.recent[0]);
+});
+
+test('matches(): a sparse filter scans at most 200 matches per request and continues with the cursor', async () => {
+  const { accounts, stats, me, mate } = await setup();
+  const win = record(accounts, me, mate, { totals: [300, 100] }); // the only win, oldest
+  for (let i = 0; i < 250; i++) record(accounts, me, mate, { totals: [100, 300] });
+  const page1 = stats.matches('Me1', { outcome: 'win' });
+  assert.equal(page1.matches.length, 0);
+  assert.ok(page1.nextBefore, 'the scan stopped at its limit: continue from its cursor');
+  const page2 = stats.matches('Me1', { outcome: 'win', before: page1.nextBefore });
+  assert.deepEqual(page2.matches.map((m) => m.matchId), [win]);
+  assert.equal(page2.nextBefore, null);
+  const losses = stats.matches('Me1', { outcome: 'loss' });
+  assert.equal(losses.matches.length, 20, 'a dense filter fills the page as before');
 });

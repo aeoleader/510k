@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { Hub, MAX_ROOMS, MAX_ROOMS_PER_IP } from '../server/hub.js';
 import { Room, DEFAULT_DELAYS } from '../server/room.js';
 import { RateLimiter } from '../server/limiter.js';
@@ -208,5 +209,27 @@ test('in the lobby a taken name still just adds another player', () => {
   const { player } = hub.joinRoom(room.code, '甲');
   assert.equal(room.players.length, 2);
   assert.notEqual(player, room.players[0]);
+  hub.deleteRoom(room.code);
+});
+
+test('a room error while a stream opens or closes is logged, not thrown', () => {
+  const hub = new Hub({ delays: SLOW });
+  const { room, player } = hub.createRoom('甲');
+  room.setOnline = () => { throw new Error('boom'); };
+  const req = new EventEmitter();
+  const res = Object.assign(new EventEmitter(), {
+    writableEnded: false, destroyed: false, writeHead() {}, write() {}, end() { this.writableEnded = true; },
+  });
+  const errors = [];
+  const original = console.error;
+  console.error = (...args) => errors.push(args);
+  try {
+    hub.connect(room, player, req, res);
+    req.emit('close');
+  } finally {
+    console.error = original;
+  }
+  assert.equal(errors.length, 2, 'both the open and the close were logged');
+  assert.equal(hub.streams, 0);
   hub.deleteRoom(room.code);
 });

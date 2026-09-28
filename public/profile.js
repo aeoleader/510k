@@ -13,7 +13,8 @@ const FILTERS = [['all', '全部'], ['win', '胜'], ['loss', '负']];
 
 let targetName = null;
 // State for the paginated 历史对局 section (independent of the profile snapshot's own totals).
-const history = { filter: 'all', items: [], nextBefore: null, total: null, loading: false };
+// `seq` tags each request so a response for an older filter or page is dropped.
+const history = { filter: 'all', items: [], nextBefore: null, total: null, loading: false, seq: 0, error: null };
 
 function readToken() {
   try { return localStorage.getItem('510k:accountToken'); } catch { return null; }
@@ -43,23 +44,36 @@ async function load() {
 }
 
 // Fetches one page of /api/users/matches for the current filter and renders it.
+// A reset (filter change, first load) always goes through and supersedes any request in flight.
 async function loadHistory({ reset = false } = {}) {
-  if (history.loading) return;
+  if (history.loading && !reset) return;
+  history.seq += 1;
+  const seq = history.seq;
   history.loading = true;
+  history.error = null;
   renderHistoryControls();
-  const res = await fetch('/api/users/matches', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      accountToken: readToken() ?? undefined,
-      username: targetName,
-      outcome: history.filter === 'all' ? undefined : history.filter,
-      before: reset ? undefined : history.nextBefore ?? undefined,
-    }),
-  });
-  const data = await res.json().catch(() => ({}));
-  history.loading = false;
-  if (!res.ok) {
+  let data = null;
+  try {
+    const res = await fetch('/api/users/matches', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accountToken: readToken() ?? undefined,
+        username: targetName,
+        outcome: history.filter === 'all' ? undefined : history.filter,
+        before: reset ? undefined : history.nextBefore ?? undefined,
+      }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.ok) data = body;
+  } catch {
+    // network error: shown below with a retry
+  } finally {
+    if (seq === history.seq) history.loading = false;
+  }
+  if (seq !== history.seq) return; // superseded by a newer request
+  if (!data) {
+    history.error = { reset };
     renderHistoryControls();
     return;
   }
@@ -111,6 +125,7 @@ function render(d) {
       </div>
       <div class="recent" id="historyRows"></div>
       <p class="muted" id="historyEmpty" hidden>还没有符合条件的对局。</p>
+      <p class="muted" id="historyError" hidden>加载失败。<button type="button" class="btn btn-sm" id="historyRetry">重试</button></p>
       <button type="button" class="btn btn-ghost btn-block" id="historyMore" hidden>加载更多</button>
     </section>`;
   setupChart(d.history);
@@ -120,9 +135,10 @@ function renderHistory() {
   const rows = $('historyRows');
   if (rows) rows.innerHTML = history.items.map(recentRow).join('');
   const empty = $('historyEmpty');
-  if (empty) empty.hidden = history.items.length > 0;
+  if (empty) empty.hidden = history.items.length > 0 || Boolean(history.nextBefore) || history.loading;
   const count = $('historyCount');
-  if (count) count.textContent = history.total === null ? '' : `，共 ${history.total} 轮`;
+  // `total` is only given for the unfiltered list.
+  if (count) count.textContent = history.total === null || history.total === undefined ? '' : `，共 ${history.total} 轮`;
   renderHistoryControls();
 }
 
@@ -133,6 +149,8 @@ function renderHistoryControls() {
     more.disabled = history.loading;
     more.textContent = history.loading ? '加载中…' : '加载更多';
   }
+  const error = $('historyError');
+  if (error) error.hidden = !history.error;
   for (const b of document.querySelectorAll('#historyFilter [data-filter]')) {
     b.setAttribute('aria-pressed', String(b.dataset.filter === history.filter));
   }
@@ -146,11 +164,12 @@ document.addEventListener('click', (e) => {
     history.items = [];
     history.nextBefore = null;
     history.total = null;
-    renderHistoryControls();
+    renderHistory();
     loadHistory({ reset: true });
     return;
   }
   if (e.target.closest('#historyMore')) loadHistory({ reset: false });
+  if (e.target.closest('#historyRetry') && history.error) loadHistory({ reset: history.error.reset });
 });
 
 function peopleBlock(title, list, key, empty) {

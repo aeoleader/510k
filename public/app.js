@@ -1063,8 +1063,10 @@ function returnDialog(v) {
     </div>`;
 }
 
-// Humans the next hand waits on (online, not left) and how many of them are ready.
+// Humans the next hand waits on and how many of them are ready, as the server counts them
+// (during the reconnect grace after a restart, offline humans still count).
 function readyCount(v) {
+  if (v.readyWaiting) return { ready: v.readyWaiting.ready, of: v.readyWaiting.needed };
   const waiting = v.players.filter((p) => !p.isBot && p.online && !p.leftEarly);
   return { ready: waiting.filter((p) => v.ready.includes(p.seat)).length, of: waiting.length };
 }
