@@ -96,3 +96,17 @@ test('special ordering: x510k < p510k < 4-bomb < ... < 9-bomb < joker bomb', () 
   assert.ok(win(jokerBomb, b9), 'a joker bomb outranks even a 9-bomb');
   assert.ok(!win(b9, jokerBomb));
 });
+
+test('连三: three or more consecutive triples, nothing attached, up to K', () => {
+  const t = (values, deck = 0) => values.flatMap((v) => [`${v}S${deck}`, `${v}H${deck}`, `${v}D${deck}`]);
+  assert.equal(type(t(['5', '6', '7'])), 'triples');
+  assert.equal(type(t(['5', '6', '7', '8'])), 'triples');
+  assert.equal(type(t(['5', '6'])), null, 'two triples stay illegal');
+  assert.equal(type(t(['Q', 'K', 'A'])), null, 'past K');
+  assert.equal(type(t(['5', '6', '8'])), null, 'not consecutive');
+  assert.equal(type([...t(['5', '6', '7']), '9S0']), null, 'nothing attached');
+  assert.ok(win(t(['5', '6', '7']), t(['4', '5', '6'], 1)));
+  assert.ok(!win(t(['4', '5', '6'], 1), t(['5', '6', '7'])));
+  assert.ok(!win(t(['9', 'T', 'J']), t(['3', '4', '5', '6'])), 'only the same length');
+  assert.ok(!win(t(['3', '4', '5', '6']), t(['9', 'T', 'J'])));
+});

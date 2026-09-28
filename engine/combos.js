@@ -1,11 +1,13 @@
 import { valueOf, isJoker, SUIT_ORDER } from './cards.js';
 
-// Straights and pair runs may not go past K.
+// Straights, pair runs and triple runs may not go past K.
 export const MAX_RUN_VALUE = 13;
 
 // A joker bomb's level: a finite number (states stay JSON-safe) that outranks any 4n bomb.
 export const JOKER_BOMB_LEVEL = 100;
 
+// Types: single, pair, triple, triple_pair (三带一对), straight (5+), pairs (3+ pairs),
+// triples (连三: 3+ consecutive triples, nothing attached), x510k, p510k, bomb, joker_bomb.
 // Every combo: { type, cards, length, cat, value, level, sub }
 // cat: 0 normal, 1 mixed 510K, 2 pure 510K, 3 bomb (incl. joker bombs).
 // level: bomb strength (card count; jokers count 3 each). sub: suit rank for pure 510K, 1 for joker bombs.
@@ -66,6 +68,9 @@ export function identify(cards, decks = 2) {
     if (n >= 5 && values.length === n) return make('straight', cards, 0, top);
     if (n >= 6 && values.length * 2 === n && values.every((v) => counts.get(v) === 2)) {
       return make('pairs', cards, 0, top);
+    }
+    if (n >= 9 && values.length * 3 === n && values.every((v) => counts.get(v) === 3)) {
+      return make('triples', cards, 0, top);
     }
   }
   return null;

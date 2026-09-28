@@ -85,3 +85,12 @@ test('bot: leads the first hint, passes on teammate, saves specials for points',
   assert.deepEqual(botAction({ hand, top, trickPoints: 0 }), { type: 'pass' });
   assert.equal(identify(botAction({ hand, top, trickPoints: 20 }).cards).cat, 2);
 });
+
+test('follow 连三: a higher run of the same length, and leads offer it', () => {
+  const hand = ['6S0', '6H0', '6D0', '7S0', '7H0', '7D0', '8S0', '8H0', '8C0', '3S0'];
+  const top = identify(['5S1', '5H1', '5D1', '6S1', '6H1', '6D1', '7S1', '7H1', '7D1']);
+  const list = cardsOf(hints(hand, top));
+  assert.equal(identify(list[0]).type, 'triples');
+  assert.equal(list[0].length, 9);
+  assert.ok(hints(hand, null).some((h) => h.combo.type === 'triples'));
+});

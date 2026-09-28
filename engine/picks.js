@@ -22,6 +22,7 @@ export function comboLabel(combo) {
     }
     case 'straight': return `顺子 ${low}-${high}`;
     case 'pairs': return `连对 ${low}-${high}`;
+    case 'triples': return `连三 ${low}-${high}`;
     case 'x510k': return '杂510K';
     case 'p510k': return `纯510K ${SUIT_SYMBOL[cards[0][1]]}`;
     case 'bomb': return `${combo.length}炸 ${high}`;

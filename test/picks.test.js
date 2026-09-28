@@ -48,3 +48,7 @@ test('labels for every combo type', () => {
   assert.equal(comboLabel(identify(['3S0', '3H0', '3C0', '3D0', '3S1'])), '5炸 3');
   assert.equal(comboLabel(identify(['LJ0', 'LJ1', 'BJ0', 'BJ1'], 2)), '王炸');
 });
+
+test('连三 label', () => {
+  assert.equal(comboLabel(identify(['5S0', '5H0', '5D0', '6S0', '6H0', '6D0', '7S0', '7H0', '7D0'])), '连三 5-7');
+});

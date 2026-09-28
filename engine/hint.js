@@ -2,7 +2,7 @@ import { valueOf, isJoker, compareCards, SUITS } from './cards.js';
 import { identify, beats, compareStrength, MAX_RUN_VALUE } from './combos.js';
 
 // Order in which a leader's options are offered: multi-card combos first.
-const LEAD_ORDER = { straight: 0, pairs: 1, triple_pair: 2, single: 3, pair: 4, triple: 5 };
+const LEAD_ORDER = { straight: 0, pairs: 1, triples: 2, triple_pair: 3, single: 4, pair: 5, triple: 6 };
 
 // Jokers group by value too (16 small, 17 big), so same-kind singles/pairs/triples
 // of jokers come from the same generators as any other value.
@@ -111,7 +111,7 @@ export function hints(hand, top = null, decks = 2) {
   let normal = [];
   if (!top) {
     normal = [
-      ...runs(groups, 1, 5), ...runs(groups, 2, 3), ...triplePairs(groups),
+      ...runs(groups, 1, 5), ...runs(groups, 2, 3), ...runs(groups, 3, 3), ...triplePairs(groups),
       ...singles(groups), ...sameKind(groups, 2), ...sameKind(groups, 3),
     ];
   } else if (top.cat === 0) {
@@ -122,6 +122,7 @@ export function hints(hand, top = null, decks = 2) {
       triple_pair: () => triplePairs(groups),
       straight: () => runs(groups, 1, top.length, top.length),
       pairs: () => runs(groups, 2, top.length / 2, top.length / 2),
+      triples: () => runs(groups, 3, top.length / 3, top.length / 3),
     };
     normal = byType[top.type]();
   }
