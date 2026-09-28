@@ -14,6 +14,7 @@
     <span id="roomBadge" class="room-code" hidden></span>
     <span id="connection" class="connection" hidden>连接中断，正在重连</span>
     <div id="scoreboard" class="scoreboard" hidden></div>
+    <span id="accountChip" class="account-chip" hidden></span>
     <a class="rules-link" href="/rules.html" target="_blank" rel="noopener">规则</a>
   </header>
 
@@ -28,8 +29,7 @@
       </ul>
     </div>
     <form id="entryForm" class="entry-card" autocomplete="off">
-      <label class="field" for="nameInput">昵称</label>
-      <input id="nameInput" maxlength="12" autocomplete="nickname">
+      <div id="accountPanel"></div>
       <button id="createBtn" type="button" class="btn btn-primary btn-block">创建房间</button>
       <div class="divider"><span>或加入朋友的房间</span></div>
       <label class="field" for="codeInput">房间码</label>

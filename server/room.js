@@ -3,6 +3,7 @@ import { defaultDecks, sumPoints, MIN_PLAYERS, MAX_PLAYERS } from '../engine/car
 import { createHandState, apply, ranking, GameError } from '../engine/game.js';
 import { createMatch, prepareHand, completeReturns, recordHand, isMatchOver, HANDS_PER_MATCH } from '../engine/match.js';
 import { botAction } from '../engine/bot.js';
+import { computeRatingDeltas } from '../engine/rating.js';
 import { smallestSingle } from '../engine/hint.js';
 import { lowestCard } from '../engine/tribute.js';
 import { HttpError } from './http.js';
@@ -17,12 +18,20 @@ const randomId = () => `p_${crypto.randomBytes(6).toString('hex')}`;
 // One room: lobby, a 10-hand match, and the automatic actions (bots, timeouts, next hand).
 // All game rules live in ../engine; this class only sequences them and guards who may act.
 export class Room {
-  constructor({ code, delays = DEFAULT_DELAYS, timers = globalThis, now = Date.now, onChange = () => {} }) {
+  // accountView(userId) -> public account or null; onMatchOver(room) persists a finished match.
+  constructor({
+    code, delays = DEFAULT_DELAYS, timers = globalThis, now = Date.now, onChange = () => {},
+    accountView = () => null, onMatchOver = () => {},
+  }) {
     this.code = code;
     this.delays = delays;
     this.timers = timers;
     this.now = now;
     this.onChange = onChange;
+    this.accountView = accountView;
+    this.onMatchOver = onMatchOver;
+    this.startedAt = null;
+    this.ratingResult = null;
     this.players = [];
     this.hostId = null;
     this.decks = null; // null = default for the player count
@@ -47,10 +56,11 @@ export class Room {
 
   // ---- players -------------------------------------------------------------
 
-  addHuman(name) {
+  // user: { id, username, rating } for a logged-in player, or null for a guest.
+  addHuman(name, user = null) {
     this.requirePhase('lobby', 'in_progress');
     if (this.players.length >= MAX_PLAYERS) throw new HttpError(409, 'room_full');
-    const player = { id: randomId(), token: randomToken(), name, isBot: false };
+    const player = { id: randomId(), token: randomToken(), name, isBot: false, userId: user?.id ?? null, leftEarly: false };
     this.players.push(player);
     if (!this.hostId) this.hostId = player.id;
     this.say(`${name} 加入了房间`);
@@ -64,7 +74,7 @@ export class Room {
     if (this.players.length >= MAX_PLAYERS) throw new HttpError(409, 'room_full');
     const used = new Set(this.players.map((p) => p.name));
     const name = BOT_NAMES.find((n) => !used.has(`${n}(机器人)`)) ?? '机器人';
-    const bot = { id: randomId(), token: null, name: `${name}(机器人)`, isBot: true };
+    const bot = { id: randomId(), token: null, name: `${name}(机器人)`, isBot: true, userId: null, leftEarly: false };
     this.players.push(bot);
     this.changed();
     return bot;
@@ -80,6 +90,28 @@ export class Room {
     if (this.hostId === playerId) this.hostId = this.players.find((p) => !p.isBot)?.id ?? null;
     if (!target.isBot) this.say(`${target.name} 离开了房间`);
     this.changed();
+  }
+
+  findByUser(userId) {
+    return this.players.find((p) => p.userId !== null && p.userId === userId) ?? null;
+  }
+
+  // Leaving mid-match hands the seat to auto-play and counts as leaving early for the rating.
+  markLeft(playerId) {
+    const player = this.players.find((p) => p.id === playerId);
+    if (!player || this.phase === 'lobby' || this.phase === 'match_over') return;
+    player.leftEarly = true;
+    this.say(`${player.name} 离开了牌桌，由机器人托管`);
+    this.changed();
+  }
+
+  rejoined(playerId) {
+    const player = this.players.find((p) => p.id === playerId);
+    if (player?.leftEarly && this.phase !== 'match_over') {
+      player.leftEarly = false;
+      this.say(`${player.name} 回到了牌桌`);
+      this.changed();
+    }
   }
 
   findByToken(token) {
@@ -124,6 +156,10 @@ export class Room {
     this.requireHost(byId);
     this.requirePhase('lobby', 'in_progress');
     if (this.players.length < MIN_PLAYERS) throw new HttpError(409, 'not_enough_players');
+    this.startedAt = this.now();
+    this.ratingResult = null;
+    this.ratingsBefore = this.players.map((p) => (p.userId ? this.accountView(p.userId)?.rating ?? null : null));
+    for (const p of this.players) p.leftEarly = false;
     this.match = createMatch({
       playerCount: this.players.length,
       decks: this.effectiveDecks(),
@@ -245,10 +281,33 @@ export class Room {
     this.result = { handNo: match.handNo, ranking: ranking(this.hand), captured: this.hand.captured, ...result };
     if (result.sweep) this.say('完胜！');
     this.phase = isMatchOver(match) ? 'match_over' : 'hand_over';
-    if (this.phase === 'match_over') this.say('本轮结束');
+    if (this.phase === 'match_over') {
+      this.say('本轮结束');
+      this.settleRatings();
+    }
     this.setDeadline(this.phase === 'hand_over' ? this.delays.nextHandMs : null);
     this.schedule();
     this.changed();
+  }
+
+  settleRatings() {
+    const deltas = computeRatingDeltas(this.match, this.players.map((p, seat) => ({
+      seat,
+      rated: p.userId !== null && this.ratingsBefore[seat] !== null,
+      ratingBefore: this.ratingsBefore[seat],
+      leftEarly: p.leftEarly,
+    })));
+    this.ratingResult = deltas.map(({ seat, delta }) => ({
+      seat,
+      before: this.ratingsBefore[seat],
+      delta,
+      after: delta === null ? null : this.ratingsBefore[seat] + delta,
+    }));
+    try {
+      this.onMatchOver(this);
+    } catch (err) {
+      console.error('failed to record match', err);
+    }
   }
 
   advanceAfterHand() {
@@ -403,7 +462,10 @@ export class Room {
         cards: inHand ? handCards(i).length : null,
         place: this.hand ? this.hand.finished.indexOf(i) + 1 || null : null,
         captured: this.hand ? this.hand.captured[i] : 0,
+        account: p.userId ? this.accountView(p.userId) : null,
+        leftEarly: p.leftEarly,
       })),
+      ratings: this.phase === 'match_over' ? this.ratingResult : null,
       turn: this.phase === 'playing' ? this.hand.turn : -1,
       deadline: this.deadline,
       deadlineSpan: this.deadlineSpan,
@@ -426,6 +488,7 @@ export class Room {
         id: playerId,
         seat,
         isHost: playerId === this.hostId,
+        account: this.players[seat].userId ? this.accountView(this.players[seat].userId) : null,
         hand: inHand ? handCards(seat) : [],
         mustReturnTo: myReturn ? myReturn.to : null,
       },

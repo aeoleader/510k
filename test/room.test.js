@@ -111,3 +111,28 @@ test('an online human who never acts is timed out: pass when following, smallest
   assert.ok(mine.every((e) => e.type === 'pass' || e.cards.length === 1));
   room.destroy();
 });
+
+test('ratings: only logged-in humans are rated; leaving mid-match settles as a loss', async () => {
+  const ratings = { 1: 60, 2: 200 };
+  let recorded = null;
+  const room = new Room({
+    code: 'RATE',
+    delays: FAST,
+    accountView: (id) => ({ username: `u${id}`, rating: ratings[id] }),
+    onMatchOver: (r) => { recorded = r.ratingResult; },
+  });
+  const a = room.addHuman('甲', { id: 1 });
+  room.addHuman('乙', { id: 2 });
+  room.addHuman('游客');
+  room.addBot(a.id);
+  room.start(a.id);
+  room.markLeft(a.id);
+  assert.equal(room.players[0].leftEarly, true);
+  await waitFor(() => room.phase === 'match_over');
+  assert.deepEqual(recorded.map((r) => r.before), [60, 200, null, null]);
+  assert.equal(recorded[2].delta, null, 'guest');
+  assert.equal(recorded[3].delta, null, 'bot');
+  assert.ok(recorded[0].delta < 0, 'the leaver loses rating even if their team won');
+  assert.equal(room.viewFor(a.id).ratings[0].after, 60 + recorded[0].delta);
+  room.destroy();
+});

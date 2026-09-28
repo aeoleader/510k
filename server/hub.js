@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { Room, DEFAULT_DELAYS } from './room.js';
 import { HttpError } from './http.js';
+import { publicAccount } from './accounts.js';
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const KEEPALIVE_MS = 20000;
@@ -14,7 +15,8 @@ function randomCode() {
 
 // Owns all rooms and their SSE listeners; pushes a per-player view after every change.
 export class Hub {
-  constructor({ delays = DEFAULT_DELAYS, timers = globalThis, now = Date.now } = {}) {
+  constructor({ delays = DEFAULT_DELAYS, timers = globalThis, now = Date.now, accounts = null } = {}) {
+    this.accounts = accounts;
     this.delays = delays;
     this.timers = timers;
     this.now = now;
@@ -22,13 +24,48 @@ export class Hub {
     this.clients = new Map(); // code -> Map(playerId -> Set(res))
   }
 
-  createRoom(name) {
+  createRoom(name, user = null) {
     let code;
     do code = randomCode(); while (this.rooms.has(code));
-    const room = new Room({ code, delays: this.delays, timers: this.timers, now: this.now, onChange: (r) => this.broadcast(r) });
+    const room = new Room({
+      code,
+      delays: this.delays,
+      timers: this.timers,
+      now: this.now,
+      onChange: (r) => this.broadcast(r),
+      accountView: (userId) => publicAccount(this.accounts?.getUser(userId)),
+      onMatchOver: (r) => this.recordMatch(r),
+    });
     this.rooms.set(code, room);
-    const player = room.addHuman(name);
+    const player = room.addHuman(name, user);
     return { room, player };
+  }
+
+  recordMatch(room) {
+    if (!this.accounts) return;
+    const { match } = room;
+    this.accounts.recordMatch({
+      roomCode: room.code,
+      playerCount: match.playerCount,
+      decks: match.decks,
+      mode: match.teams ? 'team' : 'ffa',
+      startedAt: room.startedAt,
+      endedAt: this.now(),
+      totals: match.totals,
+      players: room.players.map((p, seat) => ({
+        seat,
+        userId: p.userId,
+        name: p.name,
+        isBot: p.isBot,
+        team: match.teams ? match.teams[seat] : null,
+        total: match.totals[match.teams ? match.teams[seat] : seat],
+        heads: match.heads[seat],
+        tails: match.tails[seat],
+        ratingBefore: room.ratingResult[seat].before,
+        delta: room.ratingResult[seat].delta,
+        leftEarly: p.leftEarly,
+      })),
+    });
   }
 
   getRoom(code) {
@@ -37,9 +74,15 @@ export class Hub {
     return room;
   }
 
-  joinRoom(code, name) {
+  // A logged-in player who already holds a seat in this room gets that seat back.
+  joinRoom(code, name, user = null) {
     const room = this.getRoom(code);
-    return { room, player: room.addHuman(name) };
+    const existing = user ? room.findByUser(user.id) : null;
+    if (existing) {
+      room.rejoined(existing.id);
+      return { room, player: existing };
+    }
+    return { room, player: room.addHuman(name, user) };
   }
 
   authenticate(code, token) {
@@ -51,6 +94,7 @@ export class Hub {
 
   leave(room, player) {
     if (room.phase === 'lobby') room.removePlayer(player.id, player.id);
+    else room.markLeft(player.id);
     for (const res of this.clients.get(room.code)?.get(player.id) ?? []) res.end();
     if (room.humanCount() === 0) this.deleteRoom(room.code);
   }

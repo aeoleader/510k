@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from '../server/app.js';
+import { openDatabase } from '../server/db.js';
+import { Accounts } from '../server/accounts.js';
 import { hints } from '../engine/hint.js';
 import { identify } from '../engine/combos.js';
 
@@ -10,10 +12,12 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FAST = { turnMs: 2000, returnMs: 2000, botMs: 1, nextHandMs: 1 };
 let server;
 let base;
+let accounts;
 const streams = [];
 
 before(async () => {
-  ({ server } = createApp({ publicDir: path.join(root, 'public'), engineDir: path.join(root, 'engine'), delays: FAST }));
+  accounts = new Accounts(openDatabase(':memory:'));
+  ({ server } = createApp({ publicDir: path.join(root, 'public'), engineDir: path.join(root, 'engine'), delays: FAST, accounts }));
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -103,10 +107,8 @@ test('reconnecting with the token returns the same seat', async () => {
   await post('/api/rooms/leave', { code, token });
 });
 
-test('a human plays a full match over HTTP + SSE against three bots', async () => {
-  const { code, token } = await post('/api/rooms/create', { name: '甲' });
-  const me = await listen(code, token);
-  for (let i = 0; i < 3; i++) await post('/api/rooms/add-bot', { code, token });
+// Drive one seat through a whole match using the engine's hints; returns the final view.
+async function playMatch(code, token, me) {
   // Act only on views at least as new as our last accepted action, so a view
   // that predates our own move never triggers a second move.
   let minVersion = (await post('/api/rooms/start', { code, token })).version;
@@ -116,7 +118,7 @@ test('a human plays a full match over HTTP + SSE against three bots', async () =
     await until(() => me.count > lastSeen && me.view.version >= minVersion);
     lastSeen = me.count;
     const v = me.view;
-    if (v.phase === 'match_over') break;
+    if (v.phase === 'match_over') return { view: v, acted };
     if (v.phase === 'returning' && v.you.mustReturnTo !== null) {
       minVersion = (await post('/api/rooms/return', { code, token, card: v.you.hand[0] })).version;
     } else if (v.phase === 'playing' && v.turn === v.you.seat) {
@@ -129,8 +131,60 @@ test('a human plays a full match over HTTP + SSE against three bots', async () =
       acted += 1;
     }
   }
+}
+
+test('a human plays a full match over HTTP + SSE against three bots', async () => {
+  const { code, token } = await post('/api/rooms/create', { name: '甲' });
+  const me = await listen(code, token);
+  for (let i = 0; i < 3; i++) await post('/api/rooms/add-bot', { code, token });
+  const { view, acted } = await playMatch(code, token, me);
   assert.ok(acted > 10, 'the human acted through the match');
-  assert.equal(me.view.handNo, 10);
-  assert.equal(me.view.totals.length, 2);
+  assert.equal(view.handNo, 10);
+  assert.equal(view.totals.length, 2);
+  assert.equal(view.ratings[0].delta, null, 'guests are not rated');
+  await post('/api/rooms/leave', { code, token });
+});
+
+test('accounts: register, login, bad credentials, me and logout', async () => {
+  const reg = await post('/api/auth/register', { username: 'Jay', password: 'pw1' });
+  assert.equal(reg.account.rating, 60);
+  assert.equal(reg.account.tierName, '白银');
+  assert.equal((await post('/api/auth/register', { username: 'jay', password: 'x' }, 409)).error, 'username_taken');
+  assert.equal((await post('/api/auth/login', { username: 'Jay', password: 'nope' }, 401)).error, 'bad_login');
+  const login = await post('/api/auth/login', { username: 'jay', password: 'pw1' });
+  assert.equal((await post('/api/auth/me', { accountToken: login.accountToken })).account.username, 'Jay');
+  await post('/api/auth/logout', { accountToken: login.accountToken });
+  assert.equal((await post('/api/auth/me', { accountToken: login.accountToken }, 401)).error, 'session_expired');
+  assert.equal((await post('/api/rooms/create', { accountToken: login.accountToken }, 401)).error, 'session_expired');
+});
+
+test('accounts: a logged-in player sits under their username and gets the same seat back', async () => {
+  const { accountToken } = await post('/api/auth/register', { username: 'Seat', password: 'pw' });
+  const created = await post('/api/rooms/create', { accountToken, name: 'ignored' });
+  const again = await post('/api/rooms/join', { code: created.code, accountToken });
+  assert.equal(again.playerId, created.playerId, 'no second seat for the same account');
+  const me = await listen(created.code, created.token);
+  await until(() => me.view);
+  assert.equal(me.view.players[0].name, 'Seat');
+  assert.equal(me.view.you.account.username, 'Seat');
+  await post('/api/rooms/leave', { code: created.code, token: created.token });
+});
+
+test('accounts: a full rated match updates the rating and records the match', async () => {
+  const { accountToken } = await post('/api/auth/register', { username: 'Rated', password: 'pw' });
+  const { code, token } = await post('/api/rooms/create', { accountToken });
+  const me = await listen(code, token);
+  for (let i = 0; i < 3; i++) await post('/api/rooms/add-bot', { code, token });
+  const { view } = await playMatch(code, token, me);
+  const mine = view.ratings[view.you.seat];
+  assert.equal(mine.before, 60);
+  assert.ok(Number.isInteger(mine.delta));
+  assert.equal(mine.after, 60 + mine.delta);
+  assert.deepEqual(view.ratings.filter((r) => r.seat !== view.you.seat).map((r) => r.delta), [null, null, null]);
+  const { account } = await post('/api/auth/me', { accountToken });
+  assert.equal(account.rating, mine.after);
+  const rows = accounts.db.prepare('SELECT user_id, rating_delta FROM match_players WHERE user_id IS NOT NULL').all();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].rating_delta, mine.delta);
   await post('/api/rooms/leave', { code, token });
 });

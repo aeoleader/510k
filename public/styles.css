@@ -386,6 +386,117 @@ select { cursor: pointer; }
   color: #ffd9d4; font-size: 14px; box-shadow: var(--shadow); animation: fade 0.2s ease;
 }
 
+/* ---- accounts & tier badges (ported from card-game) ------------------------------------ */
+
+.account-chip { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.account-chip .chip-name { font-size: 13px; color: var(--muted); max-width: 10ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-chip:not([hidden]) + .rules-link { margin-left: 12px; }
+
+#accountPanel { display: grid; gap: 10px; }
+.entry-tabs { justify-self: start; margin-bottom: 4px; }
+.signed-in { display: flex; align-items: center; gap: 12px; padding: 4px 0 8px; }
+.signed-in .signed-name { font-size: 18px; font-weight: 700; }
+.signed-in .btn { margin-left: auto; }
+.auth-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
+.hint { margin: 2px 0 0; font-size: 12px; color: var(--faint); line-height: 1.5; }
+
+.rating-change {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 14px; border-radius: 10px; background: var(--bg-2); border: 1px solid var(--line);
+  color: var(--muted); font-size: 14px;
+}
+.rating-change b { color: var(--text); font-size: 18px; }
+.rating-change .delta { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.rating-change.up .delta { color: var(--ok); }
+.rating-change.down .delta { color: var(--danger); }
+
+.tier-badge {
+  --badge-h: 24px;
+  position: relative; isolation: isolate; overflow: hidden;
+  display: inline-flex; align-items: center; gap: 4px; flex: none;
+  height: var(--badge-h); padding: 0 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 800; white-space: nowrap; vertical-align: middle;
+}
+.tier-badge svg { width: 13px; height: 13px; flex: none; }
+.tier-badge.compact { --badge-h: 20px; padding: 0 7px; gap: 3px; font-size: 11px; }
+.tier-badge.compact svg { width: 11px; height: 11px; }
+.tier-stars { margin-left: 2px; color: #ffd84a; font-size: 0.8em; text-shadow: 0 0 4px rgba(255, 200, 60, 0.6); }
+.tier-stars i { color: rgba(255, 255, 255, 0.35); font-style: normal; text-shadow: none; }
+.tier-2 .tier-stars, .tier-4 .tier-stars, .tier-5 .tier-stars { color: #b8860b; text-shadow: none; }
+.tier-2 .tier-stars i, .tier-4 .tier-stars i, .tier-5 .tier-stars i { color: rgba(0, 0, 0, 0.3); }
+
+/* 0 iron: faded */
+.tier-0 { color: #8b958f; background: #1b2724; border: 1px dashed #4a5a55; font-weight: 600; }
+/* 1 bronze */
+.tier-1 {
+  color: #fff3e6; border: 1px solid #e0a36a; text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+  background: linear-gradient(135deg, #7a4520, #c77c3c 45%, #8a4d22); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+/* 2 silver: new accounts */
+.tier-2 { color: #10212a; border: 1px solid #f4fbff; background: linear-gradient(135deg, #9fb3c2, #eef4f8 40%, #a7b9c6 60%, #dde7ee); box-shadow: inset 0 1px 0 #fff; }
+/* 3 gold */
+.tier-3 {
+  color: #3a2300; border: 1px solid #fff0b3;
+  background: linear-gradient(135deg, #b8860b, #ffe27a 35%, #f0b429 55%, #fff1a8 75%, #c8930f);
+  box-shadow: 0 0 8px rgba(255, 200, 60, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+/* 4 platinum: shine sweep */
+.tier-4 {
+  color: #06302c; border: 1px solid #f0fffd;
+  background: linear-gradient(135deg, #7fd6cc, #e9fffb 40%, #9ee6dc 60%, #d4fbf5);
+  box-shadow: 0 0 12px rgba(127, 230, 214, 0.45), inset 0 1px 0 #fff;
+}
+/* 5 diamond: sweep + breathing glow */
+.tier-5 {
+  color: #04213f; border: 1px solid #e4f8ff;
+  background: linear-gradient(135deg, #3a7bff, #b3ecff 38%, #4fc3ff 58%, #e4f8ff 78%, #3a8dff);
+  box-shadow: 0 0 14px rgba(79, 195, 255, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  animation: tier-glow-diamond 2.4s ease-in-out infinite;
+}
+/* 6 king: spinning rainbow rim + neon glow + sparkles */
+.tier-6 {
+  color: #fff; background: #1a0b24; text-shadow: 0 0 8px rgba(255, 180, 255, 0.9);
+  box-shadow: 0 0 18px rgba(255, 90, 180, 0.55), 0 0 34px rgba(120, 90, 255, 0.35);
+  animation: tier-glow-king 2s ease-in-out infinite;
+}
+.tier-6::before {
+  content: ""; position: absolute; inset: -2px; z-index: -2; border-radius: inherit;
+  background: conic-gradient(from var(--tier-spin), #ff3d6e, #ffb800, #3dffb0, #3db4ff, #b43dff, #ff3d6e);
+  animation: tier-spin 3s linear infinite;
+}
+.tier-6::after {
+  content: ""; position: absolute; inset: 2px; z-index: -1; border-radius: inherit;
+  background: radial-gradient(circle at 30% 20%, #5a1f6e, #1a0b24 70%);
+}
+.tier-5 svg, .tier-6 svg { fill: currentColor; }
+.tier-shine { position: absolute; inset: 0; z-index: 1; overflow: hidden; border-radius: inherit; pointer-events: none; }
+.tier-shine::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: -60%; width: 40%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.75), transparent);
+  transform: skewX(-20deg); animation: tier-sweep 2.8s ease-in-out infinite;
+}
+.tier-5 .tier-shine::after { animation-duration: 2.2s; }
+.tier-6 .tier-shine::after { background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.55), transparent); animation-duration: 1.8s; }
+.tier-sparkles { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.tier-sparkles i {
+  position: absolute; width: 5px; height: 5px; background: #fff;
+  clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+  animation: tier-twinkle 1.6s ease-in-out infinite;
+}
+.tier-sparkles i:nth-child(1) { top: 2px; left: 12%; }
+.tier-sparkles i:nth-child(2) { top: 4px; right: 10%; animation-delay: 0.5s; }
+.tier-sparkles i:nth-child(3) { bottom: 2px; left: 45%; animation-delay: 1s; }
+.tier-sparkles i:nth-child(4) { right: 24%; bottom: 5px; width: 4px; height: 4px; animation-delay: 1.3s; }
+
+@property --tier-spin { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+@keyframes tier-spin { to { --tier-spin: 360deg; } }
+@keyframes tier-sweep { 0%, 55% { left: -60%; } 100% { left: 130%; } }
+@keyframes tier-glow-diamond { 50% { box-shadow: 0 0 24px rgba(79, 195, 255, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.7); } }
+@keyframes tier-glow-king { 50% { box-shadow: 0 0 26px rgba(255, 90, 180, 0.8), 0 0 46px rgba(120, 90, 255, 0.55); } }
+@keyframes tier-twinkle { 0%, 100% { opacity: 0; transform: scale(0.3) rotate(0); } 50% { opacity: 1; transform: scale(1) rotate(45deg); } }
+
+.seat .nameplate .tier-badge { margin-top: 2px; }
+
 /* ---- responsive --------------------------------------------------------------------------------- */
 
 @media (min-width: 1200px) {

@@ -2,6 +2,7 @@ import { hints } from '/engine/hint.js';
 import { identify, beats } from '/engine/combos.js';
 import { sortBySize, sortBy510k, bombValues } from '/engine/sort.js';
 import { valueOf, isJoker } from '/engine/cards.js';
+import { TIER_ICONS } from '/vendor/tier-icons.js';
 
 const SUIT_SYMBOL = { S: '♠', H: '♥', C: '♣', D: '♦' };
 const RANK_LABEL = { T: '10' };
@@ -14,7 +15,10 @@ const ERROR_TEXT = {
   in_progress: '对局进行中，无法加入', not_enough_players: '至少需要 4 名玩家', host_only: '只有房主可以操作',
   not_your_turn: '还没轮到你', must_lead: '首家必须出牌', invalid_combo: '不是有效牌型', too_small: '压不过上家',
   not_in_hand: '手里没有这些牌', bad_cards: '请先选牌', nothing_to_return: '无需还贡', bad_token: '登录已失效，请重新加入',
+  bad_username: '用户名为 1 到 12 个字，不能有空格', bad_password: '请输入密码', username_taken: '用户名已被注册',
+  bad_login: '用户名或密码错误', session_expired: '登录已失效，请重新登录', accounts_disabled: '服务器未开启账号功能',
 };
+const TIER_ICON = { 1: 'shield', 2: 'shield', 3: 'medal', 4: 'award', 5: 'gem', 6: 'crown' };
 const MAX_SEATS = 8;
 
 const $ = (id) => document.getElementById(id);
@@ -32,13 +36,19 @@ const state = {
   hintIndex: -1,
   events: null,
   online: true,
+  accountToken: readPref('accountToken', null),
+  account: null,
+  entryMode: readPref('entryMode', 'guest'),
 };
 
 function readPref(key, fallback) {
   try { return localStorage.getItem(`510k:${key}`) ?? fallback; } catch { return fallback; }
 }
 function writePref(key, value) {
-  try { localStorage.setItem(`510k:${key}`, value); } catch { /* storage unavailable */ }
+  try {
+    if (value === null) localStorage.removeItem(`510k:${key}`);
+    else localStorage.setItem(`510k:${key}`, value);
+  } catch { /* storage unavailable */ }
 }
 function readSession(key) {
   try { return sessionStorage.getItem(`510k:${key}`); } catch { return null; }
@@ -56,7 +66,7 @@ async function api(path, body = {}) {
   const res = await fetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code: state.code, token: state.token, ...body }),
+    body: JSON.stringify({ code: state.code, token: state.token, accountToken: state.accountToken ?? undefined, ...body }),
   });
   const payload = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(payload.error || 'error'), { code: payload.error });
@@ -67,8 +77,17 @@ async function run(fn) {
   try {
     await fn();
   } catch (err) {
+    if (err.code === 'session_expired') setAccount(null, null);
     toast(ERROR_TEXT[err.code] || '网络错误，请重试');
   }
+}
+
+function setAccount(token, account) {
+  state.accountToken = token;
+  state.account = account;
+  writePref('accountToken', token);
+  renderEntry();
+  renderAccountChip();
 }
 
 function toast(text) {
@@ -171,6 +190,19 @@ function cardHtml(id, { size = '', selectable = false, bomb = false } = {}) {
   return `<div class="${cls.join(' ')}" aria-label="${label}">${inner}</div>`;
 }
 
+// Tier badge ported from card-game: richer effects at higher tiers, stars show progress.
+function badgeHtml(account, { compact = false } = {}) {
+  if (!account) return '';
+  const tier = account.tier;
+  const stars = account.maxStars === null
+    ? (account.stars ? `<span class="tier-stars">★×${account.stars}</span>` : '')
+    : `<span class="tier-stars">${'★'.repeat(account.stars)}<i>${'☆'.repeat(account.maxStars - account.stars)}</i></span>`;
+  const icon = TIER_ICON[tier] ? TIER_ICONS[TIER_ICON[tier]] : '';
+  return `<span class="tier-badge tier-${tier} ${compact ? 'compact' : ''}" title="${esc(`${account.tierName} ${account.stars} 星，${account.rating} 分`)}">
+    ${tier >= 4 ? '<span class="tier-shine"></span>' : ''}${tier === 6 ? '<span class="tier-sparkles"><i></i><i></i><i></i><i></i></span>' : ''}
+    ${icon}${esc(account.tierName)}${stars}</span>`;
+}
+
 const fanHtml = (cards, size) => `<div class="fan">${cards.map((c) => cardHtml(c, { size })).join('')}</div>`;
 
 function avatarHtml(p, sizeVar = '') {
@@ -188,6 +220,8 @@ function render() {
   $('roomBadge').hidden = !inRoom;
   $('roomBadge').textContent = state.code ?? '';
   renderConnection();
+  renderAccountChip();
+  if (!inRoom) renderEntry();
   if (!v) {
     $('scoreboard').hidden = true;
     $('overlay').hidden = true;
@@ -202,6 +236,44 @@ function render() {
   }
   renderOverlay(v);
   tick();
+}
+
+function renderAccountChip() {
+  const chip = $('accountChip');
+  chip.hidden = !state.account;
+  if (state.account) chip.innerHTML = `<span class="chip-name">${esc(state.account.username)}</span>${badgeHtml(state.account, { compact: true })}`;
+}
+
+function renderEntry() {
+  const panel = $('accountPanel');
+  if (state.account) {
+    panel.innerHTML = `
+      <div class="signed-in">
+        <div><div class="field">已登录</div><div class="signed-name">${esc(state.account.username)}</div></div>
+        ${badgeHtml(state.account)}
+        <button type="button" id="logoutBtn" class="btn btn-ghost btn-sm">退出</button>
+      </div>`;
+    return;
+  }
+  const guest = state.entryMode !== 'account';
+  panel.innerHTML = `
+    <span class="segmented entry-tabs" role="group" aria-label="入座方式">
+      <button type="button" data-entry="guest" aria-pressed="${guest}">游客</button>
+      <button type="button" data-entry="account" aria-pressed="${!guest}">账号登录</button>
+    </span>
+    ${guest ? `
+      <label class="field" for="nameInput">昵称</label>
+      <input id="nameInput" maxlength="12" autocomplete="nickname" value="${esc(readPref('name', ''))}">
+      <p class="hint">游客不计段位。登录后每轮结束会结算段位分。</p>` : `
+      <label class="field" for="usernameInput">用户名</label>
+      <input id="usernameInput" maxlength="12" autocomplete="username">
+      <label class="field" for="passwordInput">密码</label>
+      <input id="passwordInput" type="password" maxlength="64" autocomplete="current-password">
+      <div class="auth-row">
+        <button type="button" id="loginBtn" class="btn">登录</button>
+        <button type="button" id="registerBtn" class="btn btn-ghost">注册新账号</button>
+      </div>
+      <p class="hint">玩过另一款牌局游戏的账号可以直接用原密码登录。</p>`}`;
 }
 
 function renderConnection() {
@@ -230,6 +302,7 @@ function renderLobby(v) {
       <div class="seat-slot">
         <div class="who"><span class="avatar ${p.isBot ? 'bot' : ''}" style="${team}">${esc(initial(p.name))}</span><span class="name">${esc(p.name.replace(/\(机器人\)$/, ''))}</span></div>
         <div class="meta">${i + 1} 号位${teams ? `，${i % 2 === 0 ? '蓝队' : '红队'}` : ''}${tags ? `，${tags}` : ''}</div>
+        ${p.account ? `<div>${badgeHtml(p.account, { compact: true })}</div>` : ''}
         ${isHost && p.id !== v.you.id ? `<button class="btn btn-ghost btn-sm remove" data-remove="${p.id}">移出</button>` : ''}
       </div>`);
   }
@@ -311,6 +384,7 @@ function renderTable(v) {
         <div class="nameplate">
           <span class="name">${esc(isMe ? `${p.name}（你）` : p.name.replace(/\(机器人\)$/, ''))}</span>
           <span class="stats"><span>${p.cards ?? 0} 张</span><span class="pts">${p.captured} 分</span></span>
+          ${p.account ? badgeHtml(p.account, { compact: true }) : ''}
         </div>
       </div>`);
 
@@ -432,12 +506,21 @@ function resultDialog(v) {
   const order = r ? r.ranking.map((seat) => `<span>${short(playerAt(seat))}</span>`).join('') : '';
   const penalties = (r?.penalties ?? []).map((p) => `${label(p.from)} 有人没出完，罚 ${p.amount} 分`).join('；');
   const title = over ? '本轮结束' : `第 ${r.handNo} 局结束`;
+  const mine = over && v.ratings && v.you ? v.ratings[v.you.seat] : null;
+  const ratingLine = !over ? '' : mine && mine.delta !== null
+    ? `<div class="rating-change ${mine.delta >= 0 ? 'up' : 'down'}">
+         <span>段位分 ${mine.before} → <b>${mine.after}</b></span>
+         <span class="delta">${mine.delta >= 0 ? '+' : ''}${mine.delta}</span>
+         ${badgeHtml(v.you.account)}
+       </div>`
+    : '<div class="rating-change">游客或机器人不计段位</div>';
   return `
     <div class="dialog" role="dialog" aria-label="${title}">
       <h2>${title}${r?.sweep ? ' <span class="sweep">完胜</span>' : ''}</h2>
       <div class="standings">${standings}</div>
       ${order ? `<div class="finish-order" aria-label="出完顺序">${order}</div>` : ''}
       ${penalties ? `<div class="penalty">${penalties}</div>` : ''}
+      ${ratingLine}
       <div class="actions">
         ${over
           ? (v.you?.isHost ? '<button id="restartBtn" class="btn btn-primary">回到大厅</button>' : '<span class="note">等待房主操作</span>')
@@ -482,16 +565,34 @@ document.addEventListener('click', (e) => {
     render();
     return;
   }
+  if (target.dataset.entry) {
+    state.entryMode = target.dataset.entry;
+    writePref('entryMode', state.entryMode);
+    renderEntry();
+    return;
+  }
   if (target.dataset.remove) {
     run(() => api('/api/rooms/remove-player', { playerId: target.dataset.remove }));
     return;
   }
   switch (target.id) {
     case 'createBtn':
-      run(async () => enterRoom(await api('/api/rooms/create', { name: $('nameInput').value })));
+      run(async () => enterRoom(await api('/api/rooms/create', { name: guestName() })));
       break;
     case 'joinBtn':
-      run(async () => enterRoom(await api('/api/rooms/join', { code: $('codeInput').value.trim().toUpperCase(), name: $('nameInput').value })));
+      run(async () => enterRoom(await api('/api/rooms/join', { code: $('codeInput').value.trim().toUpperCase(), name: guestName() })));
+      break;
+    case 'loginBtn':
+    case 'registerBtn':
+      run(async () => {
+        const res = await api(target.id === 'loginBtn' ? '/api/auth/login' : '/api/auth/register', {
+          username: $('usernameInput').value.trim(), password: $('passwordInput').value,
+        });
+        setAccount(res.accountToken, res.account);
+      });
+      break;
+    case 'logoutBtn':
+      run(async () => { await api('/api/auth/logout'); setAccount(null, null); });
       break;
     case 'addBotBtn': run(() => api('/api/rooms/add-bot')); break;
     case 'startBtn': run(() => api('/api/rooms/start')); break;
@@ -522,12 +623,24 @@ document.addEventListener('change', (e) => {
 });
 
 $('codeInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('joinBtn').click(); });
-$('nameInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('createBtn').click(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  if (e.target.id === 'nameInput') $('createBtn').click();
+  if (e.target.id === 'passwordInput') $('loginBtn')?.click();
+});
+document.addEventListener('input', (e) => { if (e.target.id === 'nameInput') writePref('name', e.target.value.trim()); });
+
+function guestName() {
+  return state.account ? '' : ($('nameInput')?.value ?? '');
+}
 
 // ---- boot -------------------------------------------------------------------------------
 
-$('nameInput').value = readPref('name', '');
-$('nameInput').addEventListener('change', () => writePref('name', $('nameInput').value.trim()));
+if (state.accountToken) {
+  api('/api/auth/me').then((res) => setAccount(state.accountToken, res.account)).catch((err) => {
+    if (err.code === 'session_expired') setAccount(null, null);
+  });
+}
 const roomFromUrl = new URL(location.href).searchParams.get('room');
 if (roomFromUrl) {
   const code = roomFromUrl.toUpperCase();

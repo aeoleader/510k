@@ -4,6 +4,7 @@ import path from 'node:path';
 import { Hub } from './hub.js';
 import { HttpError, sendJson, sendError, readJson } from './http.js';
 import { parseCards, parseCard, parseName, parseCode, parseDecks, parseToken } from './validate.js';
+import { publicAccount } from './accounts.js';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -41,22 +42,52 @@ function roomPayload(room, player) {
   return { code: room.code, token: player.token, playerId: player.id };
 }
 
-export function createApp({ publicDir, engineDir, delays, timers, now } = {}) {
-  const hub = new Hub({ delays, timers, now });
+// accounts: an Accounts instance, or null to run guest-only (no login, no ratings).
+export function createApp({ publicDir, engineDir, delays, timers, now, accounts = null } = {}) {
+  const hub = new Hub({ delays, timers, now, accounts });
   const publicRoot = path.resolve(publicDir);
   const engineRoot = path.resolve(engineDir);
 
   // POST handlers: body -> JSON payload. Auth'd handlers receive { room, player, body }.
+  const requireAccounts = () => {
+    if (!accounts) throw new HttpError(503, 'accounts_disabled');
+    return accounts;
+  };
+  const userFor = (body) => (accounts ? accounts.userForToken(body.accountToken) : null);
+  const displayName = (body, user) => (user ? user.username : parseName(body.name));
+
   const open = {
+    '/api/auth/register': (body) => {
+      const { token, user } = requireAccounts().register(body.username, body.password);
+      return { accountToken: token, account: publicAccount(user) };
+    },
+    '/api/auth/login': (body) => {
+      const { token, user } = requireAccounts().login(body.username, body.password);
+      return { accountToken: token, account: publicAccount(user) };
+    },
+    '/api/auth/me': (body) => {
+      const user = requireAccounts().userForToken(body.accountToken);
+      if (!user) throw new HttpError(401, 'session_expired');
+      return { account: publicAccount(user) };
+    },
+    '/api/auth/logout': (body) => {
+      requireAccounts().logout(body.accountToken);
+      return { ok: true };
+    },
     '/api/rooms/create': (body) => {
-      const { room, player } = hub.createRoom(parseName(body.name));
+      const user = userFor(body);
+      const { room, player } = hub.createRoom(displayName(body, user), user);
       return roomPayload(room, player);
     },
     '/api/rooms/join': (body) => {
       const code = parseCode(body.code);
       const existing = body.token ? hub.getRoom(code).findByToken(parseToken(body.token)) : null;
-      if (existing) return roomPayload(hub.getRoom(code), existing);
-      const { room, player } = hub.joinRoom(code, parseName(body.name));
+      if (existing) {
+        hub.getRoom(code).rejoined(existing.id);
+        return roomPayload(hub.getRoom(code), existing);
+      }
+      const user = userFor(body);
+      const { room, player } = hub.joinRoom(code, displayName(body, user), user);
       return roomPayload(room, player);
     },
   };
