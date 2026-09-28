@@ -5,6 +5,7 @@ import { Hub } from './hub.js';
 import { HttpError, sendJson, sendError, readJson } from './http.js';
 import { parseCards, parseCard, parseName, parseCode, parseDecks, parseToken } from './validate.js';
 import { publicAccount } from './accounts.js';
+import { RateLimiter } from './limiter.js';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -15,7 +16,14 @@ const MIME = {
   '.png': 'image/png',
   '.ico': 'image/x-icon',
 };
-const SWEEP_INTERVAL_MS = 30 * 60 * 1000;
+const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+const MAX_CONNECTIONS = 4000;
+// HTML pages only load our own scripts; inline style attributes are used for layout variables.
+const HTML_HEADERS = {
+  'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'",
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'no-referrer',
+};
 
 // Serve `urlPath` from `root`, refusing anything that resolves outside it.
 function serveFile(res, root, urlPath) {
@@ -33,6 +41,7 @@ function serveFile(res, root, urlPath) {
       'Content-Type': MIME[path.extname(file)] ?? 'application/octet-stream',
       'Cache-Control': 'no-cache',
       'X-Content-Type-Options': 'nosniff',
+      ...(path.extname(file) === '.html' ? HTML_HEADERS : {}),
     });
     fs.createReadStream(file).pipe(res);
   });
@@ -45,6 +54,12 @@ function roomPayload(room, player) {
 // accounts: an Accounts instance, or null to run guest-only (no login, no ratings).
 export function createApp({ publicDir, engineDir, delays, timers, now, accounts = null } = {}) {
   const hub = new Hub({ delays, timers, now, accounts });
+  // Password guessing and room spam are bounded per client IP (and per username for logins).
+  const limits = {
+    login: new RateLimiter({ limit: 10, windowMs: 60_000, now }),
+    register: new RateLimiter({ limit: 5, windowMs: 10 * 60_000, now }),
+    rooms: new RateLimiter({ limit: 30, windowMs: 10 * 60_000, now }),
+  };
   const publicRoot = path.resolve(publicDir);
   const engineRoot = path.resolve(engineDir);
 
@@ -57,12 +72,15 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
   const displayName = (body, user) => (user ? user.username : parseName(body.name));
 
   const open = {
-    '/api/auth/register': (body) => {
-      const { token, user } = requireAccounts().register(body.username, body.password);
+    '/api/auth/register': async (body, ip) => {
+      limits.register.hit(ip);
+      const { token, user } = await requireAccounts().register(body.username, body.password);
       return { accountToken: token, account: publicAccount(user) };
     },
-    '/api/auth/login': (body) => {
-      const { token, user } = requireAccounts().login(body.username, body.password);
+    '/api/auth/login': async (body, ip) => {
+      limits.login.hit(ip);
+      limits.login.hit(`${ip}|${String(body.username ?? '').toLowerCase().slice(0, 32)}`);
+      const { token, user } = await requireAccounts().login(body.username, body.password);
       return { accountToken: token, account: publicAccount(user) };
     },
     '/api/auth/me': (body) => {
@@ -74,18 +92,17 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
       requireAccounts().logout(body.accountToken);
       return { ok: true };
     },
-    '/api/rooms/create': (body) => {
+    '/api/rooms/create': (body, ip) => {
+      limits.rooms.hit(ip);
       const user = userFor(body);
-      const { room, player } = hub.createRoom(displayName(body, user), user);
+      const { room, player } = hub.createRoom(displayName(body, user), user, ip);
       return roomPayload(room, player);
     },
-    '/api/rooms/join': (body) => {
+    '/api/rooms/join': (body, ip) => {
       const code = parseCode(body.code);
       const existing = body.token ? hub.getRoom(code).findByToken(parseToken(body.token)) : null;
-      if (existing) {
-        hub.getRoom(code).rejoined(existing.id);
-        return roomPayload(hub.getRoom(code), existing);
-      }
+      if (existing) return roomPayload(hub.getRoom(code), existing);
+      limits.rooms.hit(ip);
       const user = userFor(body);
       const { room, player } = hub.joinRoom(code, displayName(body, user), user);
       return roomPayload(room, player);
@@ -94,7 +111,7 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
   const authed = {
     '/api/rooms/leave': ({ room, player }) => hub.leave(room, player),
     '/api/rooms/add-bot': ({ room, player }) => { room.addBot(player.id); },
-    '/api/rooms/remove-player': ({ room, player, body }) => room.removePlayer(player.id, String(body.playerId ?? '')),
+    '/api/rooms/remove-player': ({ room, player, body }) => hub.kick(room, player.id, String(body.playerId ?? '')),
     '/api/rooms/set-decks': ({ room, player, body }) => room.setDecks(player.id, parseDecks(body.decks)),
     '/api/rooms/start': ({ room, player }) => room.start(player.id),
     '/api/rooms/play': ({ room, player, body }) => room.play(player.id, parseCards(body.cards)),
@@ -114,7 +131,8 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
     }
     if (req.method !== 'POST') throw new HttpError(405, 'method_not_allowed');
     const body = await readJson(req);
-    if (open[url.pathname]) return sendJson(res, 200, open[url.pathname](body));
+    const ip = req.socket.remoteAddress ?? 'unknown';
+    if (open[url.pathname]) return sendJson(res, 200, await open[url.pathname](body, ip));
     const handler = authed[url.pathname];
     if (!handler) throw new HttpError(404, 'not_found');
     const { room, player } = hub.authenticate(parseCode(body.code), parseToken(body.token));
@@ -138,7 +156,11 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
     }
   });
 
-  const sweeper = setInterval(() => hub.sweep(), SWEEP_INTERVAL_MS);
+  server.maxConnections = MAX_CONNECTIONS;
+  const sweeper = setInterval(() => {
+    hub.sweep();
+    for (const limiter of Object.values(limits)) limiter.prune();
+  }, SWEEP_INTERVAL_MS);
   sweeper.unref();
   server.on('close', () => {
     clearInterval(sweeper);

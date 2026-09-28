@@ -84,6 +84,16 @@ export class Room {
     const target = this.players.find((p) => p.id === playerId);
     if (!target) throw new HttpError(404, 'no_player');
     if (byId !== playerId) this.requireHost(byId);
+    if (this.phase !== 'match_over') this.requirePhase('lobby', 'in_progress');
+    if (this.phase === 'match_over') {
+      // Seats are fixed until the room goes back to the lobby; drop the player then.
+      target.gone = true;
+      this.online.delete(playerId);
+      this.passHost(playerId);
+      this.say(`${target.name} 离开了房间`);
+      this.changed();
+      return;
+    }
     this.requirePhase('lobby', 'in_progress');
     this.players = this.players.filter((p) => p.id !== playerId);
     this.online.delete(playerId);
@@ -92,34 +102,37 @@ export class Room {
     this.changed();
   }
 
+  // Hand the host role to another human still in the game, preferring someone online.
+  passHost(fromId) {
+    if (this.hostId !== fromId) return;
+    const candidates = this.players.filter((p) => !p.isBot && !p.leftEarly && !p.gone && p.id !== fromId);
+    this.hostId = (candidates.find((p) => this.online.has(p.id)) ?? candidates[0])?.id ?? null;
+  }
+
   findByUser(userId) {
     return this.players.find((p) => p.userId !== null && p.userId === userId) ?? null;
   }
 
-  // Leaving mid-match hands the seat to auto-play and counts as leaving early for the rating.
+  // Leaving mid-match hands the seat to auto-play until the match ends (spec 3.3) and
+  // counts as leaving early for the rating. It cannot be undone by coming back.
   markLeft(playerId) {
     const player = this.players.find((p) => p.id === playerId);
-    if (!player || this.phase === 'lobby' || this.phase === 'match_over') return;
+    if (!player || player.leftEarly || this.phase === 'lobby' || this.phase === 'match_over') return;
     player.leftEarly = true;
-    this.say(`${player.name} 离开了牌桌，由机器人托管`);
+    this.online.delete(playerId);
+    this.passHost(playerId);
+    this.say(`${player.name} 离开了牌桌，由机器人托管到本轮结束`);
+    this.schedule();
     this.changed();
-  }
-
-  rejoined(playerId) {
-    const player = this.players.find((p) => p.id === playerId);
-    if (player?.leftEarly && this.phase !== 'match_over') {
-      player.leftEarly = false;
-      this.say(`${player.name} 回到了牌桌`);
-      this.changed();
-    }
   }
 
   findByToken(token) {
     return this.players.find((p) => p.token && p.token === token) ?? null;
   }
 
+  // Humans who still belong to the room (not departed at the end of a match, not left mid-match).
   humanCount() {
-    return this.players.filter((p) => !p.isBot).length;
+    return this.players.filter((p) => !p.isBot && !p.gone && !p.leftEarly).length;
   }
 
   setOnline(playerId, isOnline) {
@@ -173,6 +186,8 @@ export class Room {
     this.requireHost(byId);
     this.requirePhase('match_over', 'not_finished');
     this.clearTimer();
+    this.players = this.players.filter((p) => !p.gone);
+    for (const p of this.players) p.leftEarly = false;
     Object.assign(this, { phase: 'lobby', match: null, prepared: null, hand: null, result: null, returns: [], deadline: null, deadlineSpan: null });
     this.changed();
   }
@@ -205,7 +220,7 @@ export class Room {
 
   submitReturn(playerId, card) {
     this.requirePhase('returning', 'not_returning');
-    const seat = this.seatOf(playerId);
+    const seat = this.activeSeatOf(playerId);
     const pending = this.returns.find((r) => r.from === seat && r.card === null);
     if (!pending) throw new HttpError(409, 'nothing_to_return');
     if (!this.prepared.hands[seat].includes(card)) throw new HttpError(400, 'not_in_hand');
@@ -235,11 +250,18 @@ export class Room {
   }
 
   play(playerId, cards) {
-    this.act({ seat: this.seatOf(playerId), type: 'play', cards });
+    this.act({ seat: this.activeSeatOf(playerId), type: 'play', cards });
   }
 
   pass(playerId) {
-    this.act({ seat: this.seatOf(playerId), type: 'pass' });
+    this.act({ seat: this.activeSeatOf(playerId), type: 'pass' });
+  }
+
+  // A player who left mid-match stays on auto-play; their own actions are refused.
+  activeSeatOf(playerId) {
+    const seat = this.seatOf(playerId);
+    if (this.players[seat].leftEarly) throw new HttpError(409, 'left_match');
+    return seat;
   }
 
   // `auto` is only ever set here on the server (timeouts, bots, offline players).
@@ -322,7 +344,7 @@ export class Room {
 
   isAutomatic(seat) {
     const p = this.players[seat];
-    return p.isBot || !this.online.has(p.id);
+    return p.isBot || p.leftEarly || !this.online.has(p.id);
   }
 
   schedule() {
@@ -383,7 +405,12 @@ export class Room {
   setTimer(ms, fn) {
     this.timer = this.timers.setTimeout(() => {
       this.timer = null;
-      fn();
+      // A bug in one room must not take the whole process (and every other room) down.
+      try {
+        fn();
+      } catch (err) {
+        console.error(`room ${this.code}: automatic action failed`, err);
+      }
     }, ms);
   }
 

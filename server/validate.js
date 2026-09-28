@@ -21,8 +21,11 @@ export function parseCard(value) {
   return parseCards([value])[0];
 }
 
+// NFKC-normalise and drop control / format characters (zero-width, bidi overrides) from names.
+export const cleanText = (value) => (typeof value === 'string' ? value.normalize('NFKC').replace(/\p{C}/gu, '').trim() : '');
+
 export function parseName(value) {
-  const name = typeof value === 'string' ? value.trim() : '';
+  const name = cleanText(value);
   if (!name || [...name].length > MAX_NAME_LENGTH) throw new HttpError(400, 'bad_name');
   return name;
 }

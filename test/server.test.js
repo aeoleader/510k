@@ -146,12 +146,12 @@ test('a human plays a full match over HTTP + SSE against three bots', async () =
 });
 
 test('accounts: register, login, bad credentials, me and logout', async () => {
-  const reg = await post('/api/auth/register', { username: 'Jay', password: 'pw1' });
+  const reg = await post('/api/auth/register', { username: 'Jay', password: 'secret1' });
   assert.equal(reg.account.rating, 60);
   assert.equal(reg.account.tierName, '白银');
-  assert.equal((await post('/api/auth/register', { username: 'jay', password: 'x' }, 409)).error, 'username_taken');
+  assert.equal((await post('/api/auth/register', { username: 'jay', password: 'secret1' }, 409)).error, 'username_taken');
   assert.equal((await post('/api/auth/login', { username: 'Jay', password: 'nope' }, 401)).error, 'bad_login');
-  const login = await post('/api/auth/login', { username: 'jay', password: 'pw1' });
+  const login = await post('/api/auth/login', { username: 'jay', password: 'secret1' });
   assert.equal((await post('/api/auth/me', { accountToken: login.accountToken })).account.username, 'Jay');
   await post('/api/auth/logout', { accountToken: login.accountToken });
   assert.equal((await post('/api/auth/me', { accountToken: login.accountToken }, 401)).error, 'session_expired');
@@ -159,7 +159,7 @@ test('accounts: register, login, bad credentials, me and logout', async () => {
 });
 
 test('accounts: a logged-in player sits under their username and gets the same seat back', async () => {
-  const { accountToken } = await post('/api/auth/register', { username: 'Seat', password: 'pw' });
+  const { accountToken } = await post('/api/auth/register', { username: 'Seat', password: 'secret1' });
   const created = await post('/api/rooms/create', { accountToken, name: 'ignored' });
   const again = await post('/api/rooms/join', { code: created.code, accountToken });
   assert.equal(again.playerId, created.playerId, 'no second seat for the same account');
@@ -171,7 +171,7 @@ test('accounts: a logged-in player sits under their username and gets the same s
 });
 
 test('accounts: a full rated match updates the rating and records the match', async () => {
-  const { accountToken } = await post('/api/auth/register', { username: 'Rated', password: 'pw' });
+  const { accountToken } = await post('/api/auth/register', { username: 'Rated', password: 'secret1' });
   const { code, token } = await post('/api/rooms/create', { accountToken });
   const me = await listen(code, token);
   for (let i = 0; i < 3; i++) await post('/api/rooms/add-bot', { code, token });

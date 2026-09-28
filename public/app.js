@@ -18,6 +18,8 @@ const ERROR_TEXT = {
   not_in_hand: '手里没有这些牌', bad_cards: '请先选牌', nothing_to_return: '无需还贡', bad_token: '登录已失效，请重新加入',
   bad_username: '用户名为 1 到 12 个字，不能有空格', bad_password: '请输入密码', username_taken: '用户名已被注册',
   bad_login: '用户名或密码错误', session_expired: '登录已失效，请重新登录', accounts_disabled: '服务器未开启账号功能',
+  short_password: '密码至少 6 位', too_many_attempts: '操作太频繁，请稍后再试', too_many_rooms: '你开的房间太多了，先关掉一些',
+  server_busy: '服务器繁忙，请稍后再试', left_match: '你已离开本轮，由机器人托管到本轮结束',
 };
 const TIER_ICON = { 1: 'shield', 2: 'shield', 3: 'medal', 4: 'award', 5: 'gem', 6: 'crown' };
 const MAX_SEATS = 8;
@@ -114,6 +116,16 @@ function enterRoom({ code, token }) {
   openEvents();
 }
 
+async function recoverRoom(es) {
+  if (state.events !== es) return;
+  try {
+    enterRoom(await api('/api/rooms/join', { code: state.code, token: state.token }));
+  } catch {
+    leaveRoomLocally();
+    toast('房间已关闭或你已被移出');
+  }
+}
+
 function leaveRoomLocally() {
   if (state.events) state.events.close();
   writeSession(`token:${state.code}`, null);
@@ -131,7 +143,12 @@ function openEvents() {
   const es = new EventSource(`/api/events?room=${state.code}&token=${state.token}`);
   state.events = es;
   es.onopen = () => { state.online = true; renderConnection(); };
-  es.onerror = () => { state.online = false; renderConnection(); };
+  es.onerror = () => {
+    state.online = false;
+    renderConnection();
+    // The browser gives up for good on 401/404 (room gone after a restart, or we were removed).
+    if (es.readyState === EventSource.CLOSED) recoverRoom(es);
+  };
   es.onmessage = (msg) => {
     const view = JSON.parse(msg.data);
     if (state.view && view.code === state.view.code && view.version < state.view.version) return;

@@ -14,6 +14,6 @@ if (!source) {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = dataDirArg ?? process.env.DATA_DIR ?? path.join(root, 'data');
 const accounts = new Accounts(openDatabase(path.join(dataDir, '510k.db')));
-const summary = accounts.importCardGame(JSON.parse(fs.readFileSync(source, 'utf8')));
+const summary = await accounts.importCardGame(JSON.parse(fs.readFileSync(source, 'utf8')));
 console.log(`imported ${summary.imported} account(s)`);
 for (const s of summary.skipped) console.log(`skipped ${s.username || '(empty)'}: ${s.reason}`);

@@ -6,6 +6,11 @@ import { publicAccount } from './accounts.js';
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const KEEPALIVE_MS = 20000;
 export const ROOM_TTL_MS = 6 * 60 * 60 * 1000;
+export const IDLE_LOBBY_TTL_MS = 15 * 60 * 1000;
+export const MAX_ROOMS = 200;
+export const MAX_ROOMS_PER_IP = 5;
+export const MAX_STREAMS_PER_PLAYER = 3;
+export const MAX_STREAMS = 2000;
 
 function randomCode() {
   let code = '';
@@ -22,9 +27,21 @@ export class Hub {
     this.now = now;
     this.rooms = new Map();
     this.clients = new Map(); // code -> Map(playerId -> Set(res))
+    this.streams = 0;
+    this.accountCache = new Map(); // userId -> public account; ratings only change in recordMatch
   }
 
-  createRoom(name, user = null) {
+  accountView(userId) {
+    if (!this.accounts) return null;
+    if (!this.accountCache.has(userId)) this.accountCache.set(userId, publicAccount(this.accounts.getUser(userId)));
+    return this.accountCache.get(userId);
+  }
+
+  createRoom(name, user = null, ip = null) {
+    if (this.rooms.size >= MAX_ROOMS) throw new HttpError(503, 'server_busy');
+    if (ip && [...this.rooms.values()].filter((r) => r.creatorIp === ip).length >= MAX_ROOMS_PER_IP) {
+      throw new HttpError(429, 'too_many_rooms');
+    }
     let code;
     do code = randomCode(); while (this.rooms.has(code));
     const room = new Room({
@@ -33,9 +50,10 @@ export class Hub {
       timers: this.timers,
       now: this.now,
       onChange: (r) => this.broadcast(r),
-      accountView: (userId) => publicAccount(this.accounts?.getUser(userId)),
+      accountView: (userId) => this.accountView(userId),
       onMatchOver: (r) => this.recordMatch(r),
     });
+    room.creatorIp = ip;
     this.rooms.set(code, room);
     const player = room.addHuman(name, user);
     return { room, player };
@@ -43,6 +61,7 @@ export class Hub {
 
   recordMatch(room) {
     if (!this.accounts) return;
+    for (const p of room.players) if (p.userId) this.accountCache.delete(p.userId);
     const { match } = room;
     this.accounts.recordMatch({
       roomCode: room.code,
@@ -78,10 +97,7 @@ export class Hub {
   joinRoom(code, name, user = null) {
     const room = this.getRoom(code);
     const existing = user ? room.findByUser(user.id) : null;
-    if (existing) {
-      room.rejoined(existing.id);
-      return { room, player: existing };
-    }
+    if (existing) return { room, player: existing };
     return { room, player: room.addHuman(name, user) };
   }
 
@@ -93,10 +109,19 @@ export class Hub {
   }
 
   leave(room, player) {
-    if (room.phase === 'lobby') room.removePlayer(player.id, player.id);
+    if (room.phase === 'lobby' || room.phase === 'match_over') room.removePlayer(player.id, player.id);
     else room.markLeft(player.id);
-    for (const res of this.clients.get(room.code)?.get(player.id) ?? []) res.end();
+    this.closeStreams(room, player.id);
     if (room.humanCount() === 0) this.deleteRoom(room.code);
+  }
+
+  kick(room, byId, playerId) {
+    room.removePlayer(byId, playerId);
+    this.closeStreams(room, playerId);
+  }
+
+  closeStreams(room, playerId) {
+    for (const res of [...(this.clients.get(room.code)?.get(playerId) ?? [])]) res.end();
   }
 
   deleteRoom(code) {
@@ -107,6 +132,7 @@ export class Hub {
   }
 
   connect(room, player, req, res) {
+    if (this.streams >= MAX_STREAMS) throw new HttpError(503, 'server_busy');
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
@@ -116,11 +142,25 @@ export class Hub {
     if (!this.clients.has(room.code)) this.clients.set(room.code, new Map());
     const byPlayer = this.clients.get(room.code);
     if (!byPlayer.has(player.id)) byPlayer.set(player.id, new Set());
-    byPlayer.get(player.id).add(res);
+    const mine = byPlayer.get(player.id);
+    // A few tabs per player are fine; beyond that the oldest stream is closed.
+    while (mine.size >= MAX_STREAMS_PER_PLAYER) {
+      const oldest = mine.values().next().value;
+      mine.delete(oldest);
+      oldest.end();
+    }
+    mine.add(res);
+    this.streams += 1;
     this.send(res, room.viewFor(player.id));
     room.setOnline(player.id, true);
-    const keepalive = setInterval(() => res.write(': keepalive\n\n'), KEEPALIVE_MS);
+    const keepalive = setInterval(() => {
+      if (!res.writableEnded && !res.destroyed) res.write(': keepalive\n\n');
+    }, KEEPALIVE_MS);
+    let closed = false;
     const close = () => {
+      if (closed) return;
+      closed = true;
+      this.streams -= 1;
       clearInterval(keepalive);
       const set = byPlayer.get(player.id);
       if (!set) return;
@@ -132,9 +172,11 @@ export class Hub {
     };
     req.on('close', close);
     res.on('close', close);
+    res.on('error', close);
   }
 
   send(res, view) {
+    if (res.writableEnded || res.destroyed) return;
     try {
       res.write(`data: ${JSON.stringify(view)}\n\n`);
     } catch {
@@ -150,10 +192,12 @@ export class Hub {
   }
 
   sweep() {
-    const cutoff = this.now() - ROOM_TTL_MS;
+    const now = this.now();
     for (const [code, room] of this.rooms) {
       const listeners = this.clients.get(code)?.size ?? 0;
-      if (listeners === 0 && room.updatedAt < cutoff) this.deleteRoom(code);
+      if (listeners > 0) continue;
+      const ttl = room.phase === 'lobby' ? IDLE_LOBBY_TTL_MS : ROOM_TTL_MS;
+      if (room.updatedAt < now - ttl) this.deleteRoom(code);
     }
   }
 }
