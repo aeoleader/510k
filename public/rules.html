@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1d19">
+  <title>五十K 规则</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    body { display: block; }
+    .rules { width: min(760px, 100%); margin: 0 auto; padding: 28px 18px 60px; line-height: 1.75; }
+    .rules h1 { font-size: 34px; margin: 0 0 6px; }
+    .rules h1 b { color: var(--accent); }
+    .rules h2 { font-size: 20px; margin: 36px 0 10px; padding-top: 14px; border-top: 1px solid var(--line); }
+    .rules p, .rules li { color: var(--muted); }
+    .rules strong { color: var(--text); }
+    .rules ul, .rules ol { padding-left: 1.3em; }
+    .rules table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 8px 0; }
+    .rules th, .rules td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+    .rules th { color: var(--text); font-weight: 600; }
+    .rules td { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .order { padding: 12px 14px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); color: var(--text); font-weight: 600; }
+    .back { color: var(--muted); text-decoration: none; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <main class="rules">
+    <a class="back" href="/">返回游戏</a>
+    <h1>五十<b>K</b> 规则</h1>
+    <p>4 到 8 人的抢分纸牌。把 5、10、K 收进自己队里，10 局累计分高的一方获胜。</p>
+
+    <section aria-labelledby="setup">
+      <h2 id="setup">人数与发牌</h2>
+      <table>
+        <thead><tr><th>人数</th><th>默认副数</th><th>每人</th><th>玩法</th></tr></thead>
+        <tbody>
+          <tr><td>4</td><td>2 副</td><td>27 张</td><td>2 对 2，隔位组队</td></tr>
+          <tr><td>5</td><td>2 副</td><td>21 张</td><td>各自为战</td></tr>
+          <tr><td>6</td><td>2 副</td><td>18 张</td><td>3 对 3，隔位组队</td></tr>
+          <tr><td>7</td><td>3 副</td><td>23 张</td><td>各自为战</td></tr>
+          <tr><td>8</td><td>3 副</td><td>20 张</td><td>4 对 4，隔位组队</td></tr>
+        </tbody>
+      </table>
+      <p>房主可以改成 2 到 4 副。发不完的余牌归第一个出牌的人。</p>
+    </section>
+
+    <section aria-labelledby="cards">
+      <h2 id="cards">牌点与分牌</h2>
+      <p>从小到大：3、4、5、6、7、8、9、10、J、Q、K、A、2、小王、大王。</p>
+      <p><strong>5 算 5 分，10 和 K 各算 10 分</strong>，每副牌共 100 分。</p>
+    </section>
+
+    <section aria-labelledby="combos">
+      <h2 id="combos">牌型</h2>
+      <ul>
+        <li>单张、对子、三张、三带一对。</li>
+        <li>顺子：5 张以上连续，只能在 3 到 K 之间。</li>
+        <li>连对：3 对以上连续，只能在 3 到 K 之间。</li>
+        <li>不能出飞机。同种王可以成对或三张出，大王对大于小王对，小王对大于对 2。</li>
+      </ul>
+      <p>普通牌型只能用同牌型、同张数、更大的牌去压。下面这些特殊牌型可以压任何普通牌型：</p>
+      <p class="order">杂 510K &lt; 纯 510K &lt; 4 炸 &lt; 5 炸 &lt; … &lt; 最长的炸弹 &lt; 王炸</p>
+      <ul>
+        <li>杂 510K：5、10、K 各一张，花色不全相同。</li>
+        <li>纯 510K：同花色的 5、10、K，按黑桃、红桃、梅花、方块比大小。</li>
+        <li>炸弹：4 张以上同点数，张数多的大，张数相同比点数。</li>
+        <li>王炸：本局所有的王一起出，全场最大。</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="play">
+      <h2 id="play">出牌</h2>
+      <ol>
+        <li>每局由上一局的头游先出，第 1 局随机。</li>
+        <li>轮到你时，出能压过上家的牌，或者不要。其他人都不要时，最后出牌的人收走这一墩所有的分牌，并重新出牌。</li>
+        <li>每次出牌限时 15 秒，超时自动不要（首家自动出最小的单张）。掉线由机器人托管。</li>
+      </ol>
+    </section>
+
+    <section aria-labelledby="settle">
+      <h2 id="settle">每局结算</h2>
+      <ul>
+        <li>组队时，一队全部出完本局就结束；各自为战时，只剩一人结束。</li>
+        <li>每有 1 人没出完，他所在的队向头游所在的队交 20 分，分不够就交出全部。</li>
+        <li>罚分后分高的一方赢下本局。对方还没有人出完、己方已全部出完，叫做<strong>完胜</strong>。</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="tribute">
+      <h2 id="tribute">上贡</h2>
+      <ul>
+        <li>完胜时，输队最后两名各贡 1 张给赢队第 1、2 名。</li>
+        <li>非完胜时，从末位往上数，连续的输队玩家依次各贡 1 张给赢队第 1、2、3 名。</li>
+        <li>各自为战时，末游贡 1 张给头游。</li>
+        <li>系统自动贡出最大的牌，收贡的人还一张自己选的牌。贡牌的人里有人握有全部的王，就免贡。</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="rank">
+      <h2 id="rank">段位</h2>
+      <p>登录后每打满一轮（10 局）结算段位分，游客和机器人不计分。新账号 60 分，每 10 分一颗星，3 颗星升一个段位：黑铁、青铜、白银、黄金、铂金、钻石、王者。</p>
+      <p>赢的一方加 20 分，按领先分差再加最多 10 分；每当一次头游加 1 分，末游减 1 分；每次完胜全队加 2 分。段位越高，输的时候扣得越多。中途离开按输方结算，扣分再乘 1.5。</p>
+    </section>
+  </main>
+</body>
+</html>

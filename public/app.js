@@ -360,7 +360,7 @@ function renderScoreboard(v) {
     scores = `<span class="team-score" style="--team-color: var(--accent)"><span class="num">${mine ?? 0}</span><span class="who">我的累计</span></span>
       <span class="team-score" style="--team-color: var(--muted)"><span class="num">${v.totals[leader.seat]}</span><span class="who">领先 ${esc(leader.name.replace(/\(机器人\)$/, ''))}</span></span>`;
   }
-  sb.innerHTML = `<span class="hand-label">第 ${v.handNo} / ${v.handsPerMatch} 局</span><span class="hand-progress" aria-hidden="true">${dots}</span>${scores}`;
+  sb.innerHTML = `<span class="hand-label"><span class="long">第 </span>${v.handNo} / ${v.handsPerMatch}<span class="long"> 局</span></span><span class="hand-progress" aria-hidden="true">${dots}</span>${scores}`;
 }
 
 function seatAngle(seat, v) {
@@ -369,16 +369,27 @@ function seatAngle(seat, v) {
   return Math.PI / 2 + (rel * 2 * Math.PI) / n;
 }
 
-function seatPoint(seat, v, radius = 1) {
-  const a = seatAngle(seat, v);
+// Seats sit on an ellipse around the rail; narrow screens and big tables pull them in.
+function seatRadius(v) {
   const narrow = window.innerWidth < 560;
-  return { x: 50 + (narrow ? 37 : 43) * radius * Math.cos(a), y: 50 + 42 * radius * Math.sin(a) };
+  const crowded = v.players.length >= 7;
+  const short = window.innerHeight <= 500;
+  return { x: narrow ? (crowded ? 35 : 37) : 43, y: short ? 38 : 42 };
 }
 
+function seatPoint(seat, v, scale = 1) {
+  const a = seatAngle(seat, v);
+  const r = seatRadius(v);
+  return { x: 50 + r.x * scale * Math.cos(a), y: 50 + r.y * scale * Math.sin(a) };
+}
+
+// Where a seat's latest play lands: between the seat and the centre.
 function playPoint(seat, v) {
   const a = seatAngle(seat, v);
   const narrow = window.innerWidth < 560;
-  return { x: 50 + (narrow ? 18 : 24) * Math.cos(a), y: 50 + 22 * Math.sin(a) };
+  const r = seatRadius(v);
+  const scale = narrow || v.players.length >= 7 ? 0.5 : 0.56;
+  return { x: 50 + r.x * scale * Math.cos(a), y: 50 + r.y * scale * Math.sin(a) };
 }
 
 function renderTable(v) {
@@ -400,7 +411,7 @@ function renderTable(v) {
       <div class="${cls.join(' ')}" style="--x:${x}%;--y:${y}%">
         <div class="ring" data-ring="${p.seat}">${avatarHtml(p)}${isMe ? '' : `<span class="backs">${backs}</span>`}${badge}</div>
         <div class="nameplate">
-          <span class="name">${esc(isMe ? `${p.name}（你）` : p.name.replace(/\(机器人\)$/, ''))}</span>
+          <span class="name">${esc(p.name.replace(/\(机器人\)$/, ''))}${isMe ? '<span class="long">（你）</span>' : ''}</span>
           <span class="stats"><span>${p.cards ?? 0} 张</span><span class="pts">${p.captured} 分</span></span>
           ${p.account ? badgeHtml(p.account, { compact: true }) : ''}
         </div>
@@ -456,26 +467,90 @@ function renderTable(v) {
   renderActions(v);
 }
 
+const GROUP_GAP = 12; // extra space before each 510K group, px
+const TWO_ROW_MIN_CARDS = 14;
+const MIN_STEP = 12; // smallest visible slice of a covered card, px
+
+// Lay the hand out to fit the dock width: cards overlap just enough to fit, and on
+// portrait phones a long hand splits into two rows (higher cards on top).
 function renderHand(v) {
+  const area = $('handArea');
   const hand = v.you?.hand ?? [];
   if (!hand.length) {
-    $('handArea').innerHTML = `<div class="hand-empty">${v.phase === 'playing' ? '你已出完，等待本局结束' : ''}</div>`;
+    area.innerHTML = `<div class="hand-empty">${v.phase === 'playing' ? '你已出完，等待本局结束' : ''}</div>`;
     return;
   }
   const bombs = bombValues(hand);
-  const card = (c) => cardHtml(c, { selectable: true, bomb: !isJoker(c) && bombs.has(valueOf(c)) });
   const groups = state.sortMode === '510k'
-    ? (({ groups: g, rest }) => [...g, rest])(sortBy510k(hand))
+    ? (({ groups: g, rest }) => [...g, rest])(sortBy510k(hand)).filter((g) => g.length)
     : [sortBySize(hand)];
-  $('handArea').innerHTML = groups.filter((g) => g.length).map((g) => `<div class="group">${g.map(card).join('')}</div>`).join('');
+  const cards = groups.flatMap((g) => g.map((c, i) => ({ id: c, groupStart: i === 0 })));
+
+  const baseWidth = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w')) || 64;
+  const available = Math.max(160, area.clientWidth - 24);
+  const twoRows = window.innerWidth < 700 && window.innerHeight > 500 && cards.length >= TWO_ROW_MIN_CARDS;
+  const rows = twoRows ? [cards.slice(0, Math.ceil(cards.length / 2)), cards.slice(Math.ceil(cards.length / 2))] : [cards];
+  const widest = Math.max(...rows.map((r) => r.length));
+  const gaps = Math.max(...rows.map((r) => r.filter((c, i) => i > 0 && c.groupStart).length)) * GROUP_GAP;
+  // Short hands get bigger cards (up to 35% larger) when the row has room; long ones keep the base size.
+  const roomy = (available - gaps) / (1 + 0.5 * (widest - 1));
+  const short = window.innerHeight <= 500; // phone in landscape: no vertical room to grow
+  const cardWidth = short ? baseWidth : Math.round(Math.max(baseWidth, Math.min(baseWidth * 1.35, roomy)));
+  const step = Math.max(MIN_STEP, Math.min(cardWidth * 0.5, (available - gaps - cardWidth) / Math.max(1, widest - 1)));
+
+  const cardEl = ({ id, groupStart }, i) => {
+    const html = cardHtml(id, { selectable: true, bomb: !isJoker(id) && bombs.has(valueOf(id)) });
+    return i > 0 && groupStart ? html.replace('class="card', 'class="card gs') : html;
+  };
+  area.classList.toggle('two', twoRows);
+  area.style.setProperty('--pull', `${cardWidth - step}px`);
+  area.style.setProperty('--card-w', `${cardWidth}px`);
+  area.innerHTML = rows.map((r) => `<div class="row">${r.map(cardEl).join('')}</div>`).join('');
 }
 
+// Tap toggles a card; pressing and sliding across cards applies the same choice to each.
+function setupHandGestures() {
+  const area = $('handArea');
+  let drag = null;
+  const mark = (el, select) => {
+    const id = el.dataset.card;
+    if (select) state.selected.add(id);
+    else state.selected.delete(id);
+    el.classList.toggle('selected', select);
+    el.setAttribute('aria-pressed', String(select));
+  };
+  area.addEventListener('pointerdown', (e) => {
+    const el = e.target.closest('[data-card]');
+    if (!el || e.button > 0) return;
+    e.preventDefault();
+    if (state.view?.phase === 'returning') {
+      state.selected = new Set([el.dataset.card]);
+      render();
+      return;
+    }
+    drag = { select: !state.selected.has(el.dataset.card), seen: new Set([el.dataset.card]) };
+    mark(el, drag.select);
+    area.setPointerCapture?.(e.pointerId);
+  });
+  area.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const el = document.elementFromPoint(e.clientX, e.clientY)?.closest('#handArea [data-card]');
+    if (!el || drag.seen.has(el.dataset.card)) return;
+    drag.seen.add(el.dataset.card);
+    mark(el, drag.select);
+  });
+  const end = () => {
+    if (!drag) return;
+    drag = null;
+    render();
+  };
+  area.addEventListener('pointerup', end);
+  area.addEventListener('pointercancel', end);
+}
+setupHandGestures();
+
 function renderActions(v) {
-  const sort = `
-    <span class="segmented" role="group" aria-label="手牌整理">
-      <button type="button" data-sort="size" aria-pressed="${state.sortMode === 'size'}">按大小</button>
-      <button type="button" data-sort="510k" aria-pressed="${state.sortMode === '510k'}">510K 优先</button>
-    </span>`;
+  const sort = `<button type="button" id="sortBtn" class="btn btn-ghost sort-btn" title="切换手牌整理方式"><span class="long">整理：</span>${state.sortMode === '510k' ? '510K 优先' : '按大小'}</button>`;
   let main = '';
   const myTurn = v.phase === 'playing' && v.turn === v.you?.seat;
   if (myTurn) {
@@ -590,16 +665,10 @@ document.addEventListener('click', (e) => {
   if (!target) return;
   const cardId = target.dataset.card;
   if (cardId) {
-    if (state.view?.phase === 'returning') {
-      state.selected = new Set([cardId]);
-    } else if (state.selected.has(cardId)) state.selected.delete(cardId);
+    if (e.detail !== 0) return; // pointer taps are handled by the hand gestures; this is keyboard activation
+    if (state.view?.phase === 'returning') state.selected = new Set([cardId]);
+    else if (state.selected.has(cardId)) state.selected.delete(cardId);
     else state.selected.add(cardId);
-    render();
-    return;
-  }
-  if (target.dataset.sort) {
-    state.sortMode = target.dataset.sort;
-    writePref('sortMode', state.sortMode);
     render();
     return;
   }
@@ -638,6 +707,11 @@ document.addEventListener('click', (e) => {
     case 'nextBtn': run(() => api('/api/rooms/next')); break;
     case 'restartBtn': run(() => api('/api/rooms/restart')); break;
     case 'clearBtn': state.selected.clear(); render(); break;
+    case 'sortBtn':
+      state.sortMode = state.sortMode === '510k' ? 'size' : '510k';
+      writePref('sortMode', state.sortMode);
+      render();
+      break;
     case 'hintBtn': {
       const options = currentHints();
       if (!options.length) break;

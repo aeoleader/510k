@@ -32,6 +32,7 @@
   --radius-panel: 12px;
   --shadow: 0 16px 40px rgba(2, 10, 8, 0.45);
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --topbar-h: 56px;
 }
 
 * { box-sizing: border-box; }
@@ -52,6 +53,7 @@ body {
 }
 
 button, input, select { font: inherit; color: inherit; }
+button, a, input, select { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 b { font-weight: 800; }
 
 /* ---- buttons & inputs ------------------------------------------------------ */
@@ -86,12 +88,12 @@ select { cursor: pointer; }
 
 .topbar {
   display: flex; align-items: center; gap: 14px;
-  height: 56px; padding: 0 16px;
+  height: var(--topbar-h); padding: 0 16px;
   border-bottom: 1px solid var(--line);
   background: rgba(8, 22, 18, 0.6);
   backdrop-filter: blur(8px);
 }
-.wordmark { font-size: 20px; font-weight: 700; letter-spacing: 1px; }
+.wordmark { font-size: 20px; font-weight: 700; letter-spacing: 1px; white-space: nowrap; }
 .wordmark b, .entry-title b { color: var(--accent); }
 .room-code {
   font-variant-numeric: tabular-nums; letter-spacing: 4px; font-weight: 700;
@@ -181,7 +183,7 @@ select { cursor: pointer; }
 
 .game {
   display: grid; grid-template-rows: 1fr auto;
-  height: calc(100dvh - 56px); overflow: hidden;
+  height: calc(100dvh - var(--topbar-h)); overflow: hidden;
 }
 
 .felt-wrap { position: relative; min-height: 0; overflow: hidden; }
@@ -308,7 +310,7 @@ select { cursor: pointer; }
 /* ---- dock: actions + my hand ------------------------------------------------------------- */
 
 .dock {
-  position: relative; padding: 4px 12px 14px;
+  position: relative; padding: 4px 12px max(14px, env(safe-area-inset-bottom));
   background: linear-gradient(180deg, transparent, rgba(4, 12, 10, 0.55) 30%);
 }
 .action-bar {
@@ -325,22 +327,25 @@ select { cursor: pointer; }
     radial-gradient(closest-side, var(--bg) 80%, transparent 82% 100%),
     conic-gradient(var(--accent) calc(var(--p) * 1turn), var(--line) 0);
 }
+.sort-btn { color: var(--muted); }
 .segmented { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); }
 .segmented button { border: 0; background: transparent; padding: 0 12px; min-height: 32px; border-radius: 999px; cursor: pointer; color: var(--muted); font-size: 13px; }
 .segmented button[aria-pressed="true"] { background: var(--panel-2); color: var(--text); }
 
 .hand {
-  --overlap: 0.52;
-  display: flex; justify-content: center; align-items: flex-end;
-  padding: 24px 16px 4px; min-height: calc(var(--card-w) * 1.4 + 28px);
-  overflow-x: auto; overflow-y: hidden; scrollbar-width: thin;
+  --pull: 32px; /* how much each card tucks under the previous one; set by script to fit the width */
+  display: grid; justify-content: center; align-content: end;
+  padding: 24px 12px 4px; min-height: calc(var(--card-w) * 1.4 + 28px);
+  overflow: hidden; touch-action: none; user-select: none;
 }
-.hand .group { display: flex; flex: none; }
-.hand .group + .group { margin-left: 18px; }
+.hand .row { display: flex; justify-content: center; }
+.hand.two .row + .row { margin-top: calc(var(--card-w) * -0.78); position: relative; }
 .hand .card { cursor: pointer; transition: transform 0.16s var(--ease), box-shadow 0.16s; }
-.hand .group .card + .card { margin-left: calc(var(--card-w) * var(--overlap) * -1); }
-.hand .card:hover { transform: translateY(-8px); }
-.hand .card.selected { transform: translateY(-20px); box-shadow: 0 0 0 2px var(--accent), 0 10px 18px rgba(0, 0, 0, 0.4); }
+.hand .row .card + .card { margin-left: calc(var(--pull) * -1); }
+.hand .row .card.gs { margin-left: calc(var(--pull) * -1 + 12px); }
+@media (hover: hover) { .hand .card:hover { transform: translateY(-8px); } }
+.hand .card.selected { transform: translateY(-18px); box-shadow: 0 0 0 2px var(--accent), 0 10px 18px rgba(0, 0, 0, 0.4); }
+.hand.two .card.selected { transform: translateY(-12px); }
 .hand-empty { color: var(--faint); font-size: 14px; padding: 24px; }
 
 /* ---- overlays --------------------------------------------------------------------------------- */
@@ -637,21 +642,32 @@ select { cursor: pointer; }
   .seat { width: 92px; }
   .seat .avatar { --size: 36px; }
   .seat .nameplate { min-width: 78px; padding: 4px 6px; }
-  .hand { justify-content: flex-start; --overlap: 0.58; }
-  .hand .group:first-child { margin-left: auto; }
-  .hand .group:last-child { margin-right: auto; }
   .hand-progress { display: none; }
   .rules-link { display: none; }
 }
 
+@media (pointer: coarse) {
+  .btn { min-height: 44px; }
+  .btn-sm { min-height: 36px; }
+}
+
 @media (max-width: 560px) {
-  :root { --card-w: 46px; }
+  :root { --card-w: 46px; --topbar-h: 50px; }
   .topbar { gap: 8px; padding: 0 10px; }
+  .long { display: none; }
+  .scoreboard { gap: 6px; margin-left: 0; }
+  .account-chip .chip-name { display: none; }
+  .account-chip { margin-left: auto; }
+  .seat .nameplate .tier-badge { display: none; }
+  .seat .stats { gap: 5px; font-size: 11px; }
+  .seat .nameplate { min-width: 0; max-width: 84px; }
+  .backs { left: -14px; }
+  .backs i { width: 12px; height: 17px; margin-left: -8px; }
   .wordmark { font-size: 17px; }
   .room-code { letter-spacing: 2px; padding: 2px 8px; }
   .team-score { padding: 2px 8px; }
   .team-score .num { font-size: 15px; }
-  .seat { width: 76px; }
+  .seat { width: 70px; }
   .seat .avatar { --size: 32px; }
   .seat .name { font-size: 12px; }
   .card.sm { --w: 30px; }
@@ -659,9 +675,37 @@ select { cursor: pointer; }
   .log-ticker { display: none; }
   .action-bar { gap: 6px; }
   .action-bar .spacer { display: none; }
-  .action-bar .segmented { order: 2; }
+  .action-bar .sort-btn { order: 2; padding: 0 10px; }
   .action-bar .btn { padding: 0 14px; }
   .timer { width: 36px; height: 36px; font-size: 13px; }
+}
+
+/* phones held sideways: give the height to the felt and the hand */
+@media (max-height: 500px) and (orientation: landscape) {
+  :root { --card-w: 42px; --topbar-h: 42px; }
+  .topbar { gap: 10px; }
+  .wordmark { font-size: 16px; }
+  .rules-link, .log-ticker, .backs, .seat .nameplate .tier-badge, .hand-progress { display: none; }
+  .felt { inset: 7% 12% 4%; }
+  .seat { width: 110px; gap: 2px; }
+  .seat .avatar { --size: 26px; font-size: 12px; }
+  .seat .ring::before { inset: -5px; }
+  .seat .nameplate { display: flex; gap: 6px; padding: 2px 8px; min-width: 0; max-width: 150px; }
+  .seat .name { font-size: 11px; max-width: 5em; }
+  .seat .stats { font-size: 11px; gap: 4px; white-space: nowrap; }
+  .seat .badge { top: -6px; right: -12px; font-size: 10px; padding: 0 5px; }
+  .card.md { --w: 30px; }
+  .card.sm { --w: 26px; }
+  .center-area { gap: 4px; }
+  .center-area .trick-label { font-size: 11px; }
+  .points-pill { padding: 2px 10px; font-size: 13px; }
+  .dock { padding-top: 0; padding-bottom: max(6px, env(safe-area-inset-bottom)); }
+  .action-bar { min-height: 38px; gap: 6px; }
+  .action-bar .btn { min-height: 34px; padding: 0 14px; }
+  .timer { width: 32px; height: 32px; font-size: 12px; }
+  .hand { padding-top: 16px; min-height: calc(var(--card-w) * 1.4 + 18px); }
+  .fx-stamp span { font-size: 26px; }
+  .fx-stamp-king span { font-size: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
