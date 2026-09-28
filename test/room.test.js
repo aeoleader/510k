@@ -136,3 +136,21 @@ test('ratings: only logged-in humans are rated; leaving mid-match settles as a l
   assert.equal(room.viewFor(a.id).ratings[0].after, 60 + recorded[0].delta);
   room.destroy();
 });
+
+test('the host picks the time per turn in the lobby; it drives the turn deadline', () => {
+  const { room } = makeRoom({ turnMs: 15000, returnMs: 100000, botMs: 100000, nextHandMs: 100000 });
+  const host = room.addHuman('甲');
+  const guest = room.addHuman('乙');
+  room.addBot(host.id);
+  room.addBot(host.id);
+  assert.equal(room.viewFor(host.id).turnSeconds, 15);
+  assert.equal(code(() => room.setTurnSeconds(guest.id, 30)), 'host_only');
+  room.setTurnSeconds(host.id, 30);
+  assert.equal(room.viewFor(guest.id).turnSeconds, 30);
+  room.setOnline(host.id, true);
+  room.setOnline(guest.id, true);
+  room.start(host.id);
+  assert.equal(code(() => room.setTurnSeconds(host.id, 10)), 'in_progress');
+  if (!room.isAutomatic(room.hand.turn)) assert.equal(room.deadlineSpan, 30000);
+  room.destroy();
+});

@@ -42,6 +42,7 @@ export class Room {
     this.players = [];
     this.hostId = null;
     this.decks = null; // null = default for the player count
+    this.turnSeconds = null; // host's choice of time per turn; null = the server default
     this.phase = 'lobby'; // lobby | returning | playing | hand_over | match_over
     this.online = new Set();
     this.match = null;
@@ -164,6 +165,17 @@ export class Room {
     this.requirePhase('lobby', 'in_progress');
     this.decks = decks;
     this.changed();
+  }
+
+  setTurnSeconds(byId, seconds) {
+    this.requireHost(byId);
+    this.requirePhase('lobby', 'in_progress');
+    this.turnSeconds = seconds;
+    this.changed();
+  }
+
+  turnMs() {
+    return this.turnSeconds ? this.turnSeconds * 1000 : this.delays.turnMs;
   }
 
   effectiveDecks() {
@@ -399,8 +411,8 @@ export class Room {
         this.setDeadline(null);
         this.setTimer(this.delays.botMs, () => this.autoPlay(seat, false));
       } else {
-        this.setDeadline(this.delays.turnMs);
-        this.setTimer(this.delays.turnMs, () => this.autoPlay(seat, true));
+        this.setDeadline(this.turnMs());
+        this.setTimer(this.turnMs(), () => this.autoPlay(seat, true));
       }
     } else if (this.phase === 'hand_over') {
       this.setTimer(Math.max(0, this.deadline - this.now()), () => this.advanceAfterHand());
@@ -517,6 +529,8 @@ export class Room {
       serverNow: this.now(),
       decks: this.match?.decks ?? this.effectiveDecks(),
       decksChoice: this.decks,
+      turnSeconds: Math.round(this.turnMs() / 1000),
+      turnChoice: this.turnSeconds,
       teams: this.match?.teams ?? null,
       handNo: this.match ? Math.min(this.match.handNo + (this.phase === 'hand_over' || this.phase === 'match_over' ? 0 : 1), HANDS_PER_MATCH) : 0,
       handsPerMatch: HANDS_PER_MATCH,

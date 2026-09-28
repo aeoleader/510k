@@ -100,6 +100,8 @@ test('input validation', async () => {
   assert.equal((await post('/api/rooms/play', { code, token, cards: ['XX0'] }, 400)).error, 'bad_cards');
   assert.equal((await post('/api/rooms/play', { code, token, cards: ['3S0', '3S0'] }, 400)).error, 'bad_cards');
   assert.equal((await post('/api/rooms/start', { code, token }, 409)).error, 'not_enough_players');
+  assert.equal((await post('/api/rooms/set-turn-time', { code, token, seconds: 7 }, 400)).error, 'bad_turn_time');
+  assert.equal((await post('/api/rooms/set-turn-time', { code, token, seconds: 45 })).ok, true);
   assert.equal((await post('/api/rooms/leave', { code, token })).ok, true);
 });
 

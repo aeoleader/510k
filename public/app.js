@@ -6,6 +6,7 @@ import {
   TYPE_LABEL, esc, initial, cardHtml as baseCardHtml, badgeHtml, fanHtml,
 } from '/ui.js';
 import { Effects } from '/effects.js';
+import { quickPicks, comboLabel } from '/engine/picks.js';
 
 const ERROR_TEXT = {
   bad_name: '请输入 1 到 12 个字的昵称', bad_code: '房间码是 4 位', no_room: '房间不存在', room_full: '房间已满',
@@ -15,7 +16,7 @@ const ERROR_TEXT = {
   bad_username: '用户名为 1 到 12 个字，不能有空格', bad_password: '请输入密码', username_taken: '用户名已被注册',
   bad_login: '用户名或密码错误', session_expired: '登录已失效，请重新登录', accounts_disabled: '服务器未开启账号功能',
   short_password: '密码至少 6 位', too_many_attempts: '操作太频繁，请稍后再试', too_many_rooms: '你开的房间太多了，先关掉一些',
-  server_busy: '服务器繁忙，请稍后再试', left_match: '你已离开本轮，由机器人托管到本轮结束',
+  server_busy: '服务器繁忙，请稍后再试', bad_turn_time: '不支持这个时长', left_match: '你已离开本轮，由机器人托管到本轮结束',
 };
 const MAX_SEATS = 8;
 
@@ -37,6 +38,8 @@ const state = {
   account: null,
   entryMode: readPref('entryMode', 'guest'),
   invite: null, // room code from an invite link we have not joined yet
+  focusCard: null, // last card the player tapped to select; quick picks show plays using it
+  picks: [],
   fxSeen: new Set(), // play / trick / head ids already animated
   fxPrimed: false, // false until the first table render, so a reload does not replay old plays
   counterOpen: readPref('counterOpen', window.innerWidth >= 820 ? '1' : '0') === '1',
@@ -363,6 +366,11 @@ function renderLobby(v) {
       <label class="decks">副数
         <select id="decksSelect" ${isHost ? '' : 'disabled'}>${deckOptions}</select>
       </label>
+      <label class="decks">出牌限时
+        <select id="turnSelect" ${isHost ? '' : 'disabled'}>${[null, 10, 15, 20, 30, 45, 60].map((sec) => `
+          <option value="${sec ?? ''}" ${v.turnChoice === sec ? 'selected' : ''}>${sec === null ? `默认 ${v.turnChoice === null ? v.turnSeconds : 15} 秒` : `${sec} 秒`}</option>`).join('')}
+        </select>
+      </label>
       <span class="note">${mode}${count >= 4 ? `，每人 ${perPlayer} 张${left ? `，余 ${left} 张给首家` : ''}` : ''}</span>
       <span class="spacer"></span>
       ${isHost ? `<button id="addBotBtn" class="btn" ${count >= MAX_SEATS ? 'disabled' : ''}>加机器人</button>` : ''}
@@ -500,6 +508,7 @@ function renderTable(v) {
 
   renderHand(v);
   renderActions(v);
+  renderQuickPicks(v);
   renderCounter(v);
 }
 
@@ -585,6 +594,7 @@ function setupHandGestures() {
       return;
     }
     drag = { select: !state.selected.has(el.dataset.card), seen: new Set([el.dataset.card]) };
+    if (drag.select) state.focusCard = el.dataset.card;
     mark(el, drag.select);
     area.setPointerCapture?.(e.pointerId);
   });
@@ -604,6 +614,26 @@ function setupHandGestures() {
   area.addEventListener('pointercancel', end);
 }
 setupHandGestures();
+
+// Tappable plays above the hand: what beats the last play, or, after tapping a card,
+// the plays that use that card.
+function renderQuickPicks(v) {
+  const el = $('quickPicks');
+  const myTurn = v.phase === 'playing' && v.turn === v.you?.seat;
+  if (!myTurn || !v.you.hand.length) {
+    el.hidden = true;
+    state.picks = [];
+    return;
+  }
+  const focus = state.focusCard && state.selected.has(state.focusCard) ? state.focusCard : null;
+  state.picks = quickPicks(v.you.hand, currentTop(), v.decks, focus);
+  const chosen = [...state.selected].sort().join();
+  el.hidden = false;
+  el.innerHTML = state.picks.length
+    ? `<span class="picks-label">${focus ? '含这张' : v.trick ? '能压' : '可出'}</span>${state.picks.map((p, i) => `
+        <button type="button" class="pick ${p.combo.cat ? 'special' : ''} ${[...p.cards].sort().join() === chosen ? 'on' : ''}" data-pick="${i}">${esc(comboLabel(p.combo))}</button>`).join('')}`
+    : `<span class="picks-label">${focus ? '这张牌没有能出的组合' : '要不起'}</span>`;
+}
 
 function renderActions(v) {
   const sort = `<button type="button" id="sortBtn" class="btn btn-ghost sort-btn" title="切换手牌整理方式"><span class="long">整理：</span>${state.sortMode === '510k' ? '510K 优先' : '按大小'}</button>`;
@@ -725,7 +755,10 @@ document.addEventListener('click', (e) => {
     if (e.detail !== 0) return; // pointer taps are handled by the hand gestures; this is keyboard activation
     if (state.view?.phase === 'returning') state.selected = new Set([cardId]);
     else if (state.selected.has(cardId)) state.selected.delete(cardId);
-    else state.selected.add(cardId);
+    else {
+      state.selected.add(cardId);
+      state.focusCard = cardId;
+    }
     render();
     return;
   }
@@ -733,6 +766,12 @@ document.addEventListener('click', (e) => {
     state.entryMode = target.dataset.entry;
     writePref('entryMode', state.entryMode);
     renderEntry();
+    return;
+  }
+  if (target.dataset.pick) {
+    const pick = state.picks[Number(target.dataset.pick)];
+    if (pick) state.selected = new Set(pick.cards);
+    render();
     return;
   }
   if (target.dataset.remove) {
@@ -794,6 +833,10 @@ document.addEventListener('click', (e) => {
 });
 
 document.addEventListener('change', (e) => {
+  if (e.target.id === 'turnSelect') {
+    const value = e.target.value;
+    run(() => api('/api/rooms/set-turn-time', { seconds: value === '' ? null : Number(value) }));
+  }
   if (e.target.id === 'decksSelect') {
     const value = e.target.value;
     run(() => api('/api/rooms/set-decks', { decks: value === '' ? null : Number(value) }));

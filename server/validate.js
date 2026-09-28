@@ -42,6 +42,14 @@ export function parseDecks(value) {
   return value;
 }
 
+export const TURN_SECONDS_CHOICES = [10, 15, 20, 30, 45, 60];
+
+export function parseTurnSeconds(value) {
+  if (value === null) return null; // null = server default
+  if (!TURN_SECONDS_CHOICES.includes(value)) throw new HttpError(400, 'bad_turn_time');
+  return value;
+}
+
 export const parseToken = (value) => {
   if (typeof value !== 'string' || !/^[a-f0-9]{48}$/.test(value)) throw new HttpError(401, 'bad_token');
   return value;

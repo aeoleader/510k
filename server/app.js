@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Hub } from './hub.js';
 import { HttpError, sendJson, sendError, readJson } from './http.js';
-import { parseCards, parseCard, parseName, parseCode, parseDecks, parseToken } from './validate.js';
+import { parseCards, parseCard, parseName, parseCode, parseDecks, parseToken, parseTurnSeconds } from './validate.js';
 import { publicAccount } from './accounts.js';
 import { RateLimiter } from './limiter.js';
 import { Stats } from './stats.js';
@@ -160,6 +160,7 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
     '/api/rooms/add-bot': ({ room, player }) => { room.addBot(player.id); },
     '/api/rooms/remove-player': ({ room, player, body }) => hub.kick(room, player.id, String(body.playerId ?? '')),
     '/api/rooms/set-decks': ({ room, player, body }) => room.setDecks(player.id, parseDecks(body.decks)),
+    '/api/rooms/set-turn-time': ({ room, player, body }) => room.setTurnSeconds(player.id, parseTurnSeconds(body.seconds)),
     '/api/rooms/start': ({ room, player }) => room.start(player.id),
     '/api/rooms/play': ({ room, player, body }) => room.play(player.id, parseCards(body.cards)),
     '/api/rooms/pass': ({ room, player }) => room.pass(player.id),
