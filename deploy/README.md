@@ -8,7 +8,16 @@ One instance = one port. The server has no npm dependencies; Node 22.5+ is requi
    `systemctl daemon-reload && systemctl enable --now 510k-<port>` and `ufw allow <port>/tcp`.
 4. Check `curl -s localhost:<port>/api/health`.
 
-Data (accounts, match history) is the SQLite file `/var/lib/510k-<port>/510k.db`. Back it up before upgrades.
+Data (accounts, match history, replays) is the SQLite file `/var/lib/510k-<port>/510k.db`. Back it up before upgrades
+(`sqlite3 .backup` or copy it with the service stopped); schema migrations run automatically on start.
+
+Admins who may open `/admin` (card counter switches) are set per host, outside the repo, with a drop-in:
+`/etc/systemd/system/510k-<port>.service.d/admins.conf` containing
+```
+[Service]
+Environment=ADMIN_USERS=name1,name2
+```
+then `systemctl daemon-reload && systemctl restart 510k-<port>`.
 
 Importing card-game accounts (once): run as the service user so the database stays writable by it:
 `sudo -u cardroom DATA_DIR=/var/lib/510k-<port> node --disable-warning=ExperimentalWarning /opt/510k-<port>/server/import-card-game.js <accounts.json>`
