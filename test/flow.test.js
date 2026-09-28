@@ -122,6 +122,19 @@ test('dealing: each player sees only their revealed cards in dealt order', () =>
   room.destroy();
 });
 
+test('dealing: a view is pushed every round, and the wakeups stop once the deal is out', () => {
+  const { room, clock, host } = setup({ dealMode: true, online: [] });
+  const pushes = [];
+  room.onChange = (r) => pushes.push(r.phase === 'dealing' ? r.dealRounds() : r.phase);
+  room.start(host.id);
+  clock.advance(1000);
+  assert.deepEqual(pushes.slice(0, 11), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  clock.advance(27 * 100 - 1000 + 1500); // into the claim grace (nobody holds a claiming bot)
+  assert.equal(room.phase, 'dealing');
+  assert.ok(clock.pending.size <= 1, 'one timer for the grace, not a busy loop');
+  room.destroy();
+});
+
 test('亮黑3: not before it is revealed, first claim wins, the deal goes on, the winner leads with the leftover', () => {
   // Five humans: 21 cards each and 3 leftover cards for the leader.
   const names = ['甲', '乙', '丙', '丁', '戊'];

@@ -389,7 +389,11 @@ export class Room {
       const due = Object.entries(d.claimAt).filter(([, at]) => at <= now).sort((a, b) => a[1] - b[1])[0];
       if (due) return this.claim(Number(due[0]));
     }
-    if (now < this.dealEndAt()) return this.schedule();
+    if (now < this.dealEndAt()) {
+      // Push every round so each player sees their cards arrive (and a black 3) as they are dealt.
+      this.changed();
+      return this.schedule();
+    }
     if (this.claimedBy !== null) return this.finishDeal(this.claimedBy);
     if (!d.ended) {
       // Everything is dealt and nobody has shown the black 3 yet: a short grace to do it.
@@ -658,7 +662,9 @@ export class Room {
     if (this.paused) return;
     const untilDeadline = () => Math.max(0, this.deadline - this.now());
     if (this.phase === 'dealing') {
-      const next = Math.min(this.deadline ?? this.dealEndAt(), ...(this.claimedBy === null ? Object.values(this.dealing.claimAt) : []));
+      const rounds = this.dealRounds();
+      const nextRound = rounds < this.dealing.total ? this.dealing.startedAt + (rounds + 1) * this.delays.dealRoundMs : Infinity;
+      const next = Math.min(this.deadline ?? this.dealEndAt(), nextRound, ...(this.claimedBy === null ? Object.values(this.dealing.claimAt) : []));
       this.setTimer(Math.max(0, next - this.now()), () => this.dealTick());
     } else if (this.phase === 'tribute') {
       this.setTimer(untilDeadline(), () => this.startReturns());
