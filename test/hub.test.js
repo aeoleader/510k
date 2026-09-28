@@ -117,3 +117,67 @@ test('refreshing one user pushes a view to that player only', () => {
   assert.deepEqual(writes, { mine: 1, theirs: 0 });
   hub.deleteRoom(room.code);
 });
+
+// A 4-seat match in progress: host 甲 (guest), guest 乙, account seat 阿杰, one bot.
+function matchInProgress() {
+  const hub = new Hub({ delays: SLOW });
+  const { room, player: host } = hub.createRoom('甲');
+  const { player: guest } = hub.joinRoom(room.code, '乙');
+  const { player: member } = hub.joinRoom(room.code, '阿杰', { id: 7, username: '阿杰' });
+  room.addBot(host.id);
+  for (const p of [host, guest, member]) room.setOnline(p.id, true);
+  room.start(host.id);
+  return { hub, room, host, guest, member };
+}
+
+test('a guest who left mid-match takes the seat back by name', () => {
+  const { hub, room, guest } = matchInProgress();
+  const seat = room.players.indexOf(guest);
+  const oldToken = guest.token;
+  hub.leave(room, guest);
+  assert.equal(guest.leftEarly, true);
+  const { player } = hub.joinRoom(room.code, '乙');
+  assert.equal(player, guest, 'same seat');
+  assert.equal(room.players.indexOf(player), seat);
+  assert.notEqual(player.token, oldToken, 'a fresh token');
+  assert.equal(code(() => hub.authenticate(room.code, oldToken)), 'bad_token');
+  assert.equal(hub.authenticate(room.code, player.token).player, guest);
+  assert.equal(player.leftEarly, false, 'rated normally again');
+  assert.ok(room.log.some((l) => l.text === '乙 回到了牌桌'));
+  hub.deleteRoom(room.code);
+});
+
+test('reclaiming by name: online seats and account seats are refused, offline guests come back', () => {
+  const { hub, room, guest } = matchInProgress();
+  assert.equal(code(() => hub.joinRoom(room.code, '乙')), 'name_in_use', 'the owner is still online');
+  assert.equal(code(() => hub.joinRoom(room.code, '阿杰')), 'name_in_use', 'a guest cannot take an account seat');
+  assert.equal(code(() => hub.joinRoom(room.code, '丙')), 'in_progress', 'no such seat');
+  room.setOnline(guest.id, false); // their stream closed
+  assert.equal(room.isAutomatic(room.players.indexOf(guest)), true);
+  const oldToken = guest.token;
+  assert.equal(hub.joinRoom(room.code, '乙').player, guest);
+  assert.notEqual(guest.token, oldToken);
+  hub.deleteRoom(room.code);
+});
+
+test('a logged-in player who left mid-match gets the seat back and is no longer counted as left', () => {
+  const { hub, room, member } = matchInProgress();
+  hub.leave(room, member);
+  assert.equal(member.leftEarly, true);
+  assert.equal(code(() => hub.joinRoom(room.code, '阿杰')), 'name_in_use', 'still only for the account');
+  assert.equal(code(() => hub.joinRoom(room.code, '阿杰', { id: 8, username: '阿杰' })), 'in_progress');
+  const oldToken = member.token;
+  assert.equal(hub.joinRoom(room.code, '阿杰', { id: 7, username: '阿杰' }).player, member);
+  assert.equal(member.leftEarly, false);
+  assert.notEqual(member.token, oldToken);
+  hub.deleteRoom(room.code);
+});
+
+test('in the lobby a taken name still just adds another player', () => {
+  const hub = new Hub({ delays: SLOW });
+  const { room } = hub.createRoom('甲');
+  const { player } = hub.joinRoom(room.code, '甲');
+  assert.equal(room.players.length, 2);
+  assert.notEqual(player, room.players[0]);
+  hub.deleteRoom(room.code);
+});

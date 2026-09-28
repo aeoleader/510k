@@ -155,7 +155,7 @@ export class Room {
   }
 
   // Leaving mid-match hands the seat to auto-play until the match ends (spec 3.3) and
-  // counts as leaving early for the rating. It cannot be undone by coming back.
+  // counts as leaving early for the rating, unless the player comes back and reclaims the seat.
   markLeft(playerId) {
     const player = this.players.find((p) => p.id === playerId);
     if (!player || player.leftEarly || this.phase === 'lobby' || this.phase === 'match_over') return;
@@ -166,6 +166,22 @@ export class Room {
     this.schedule();
     if (this.readyToAdvance()) return this.advanceAfterHand();
     this.changed();
+  }
+
+  // Someone takes back a seat on auto-play (托管). A fresh token logs the old device out;
+  // the seat is no longer counted as left, so it is rated normally.
+  reclaim(playerId) {
+    const player = this.players[this.seatOf(playerId)];
+    player.token = randomToken();
+    player.leftEarly = false;
+    this.say(`${player.name} 回到了牌桌`);
+    if (this.waitsOn(playerId)) this.schedule();
+    this.changed();
+    return player;
+  }
+
+  inMatch() {
+    return this.phase !== 'lobby' && this.phase !== 'match_over';
   }
 
   findByToken(token) {

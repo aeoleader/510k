@@ -116,11 +116,27 @@ export class Hub {
   }
 
   // A logged-in player who already holds a seat in this room gets that seat back.
+  // Mid-match, a guest may take back a guest seat of the same name while it is on auto-play.
   joinRoom(code, name, user = null) {
     const room = this.getRoom(code);
     const existing = user ? room.findByUser(user.id) : null;
-    if (existing) return { room, player: existing };
+    if (existing) {
+      if (existing.leftEarly && room.inMatch()) this.reclaim(room, existing);
+      return { room, player: existing };
+    }
+    const seat = !user && room.inMatch() ? room.players.find((p) => !p.isBot && !p.gone && p.name === name) : null;
+    if (seat) {
+      const automatic = seat.leftEarly || !room.online.has(seat.id);
+      if (seat.userId !== null || !automatic) throw new HttpError(409, 'name_in_use');
+      this.reclaim(room, seat);
+      return { room, player: seat };
+    }
     return { room, player: room.addHuman(name, user) };
+  }
+
+  reclaim(room, player) {
+    this.closeStreams(room, player.id);
+    room.reclaim(player.id);
   }
 
   authenticate(code, token) {

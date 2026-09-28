@@ -287,3 +287,21 @@ test('admin: only admins manage card counters, and counter data reaches only tha
   await post('/api/rooms/leave', { code: guest.code, token: guest.token });
   await post('/api/rooms/leave', { code: host.code, token: host.token });
 });
+
+test('a guest who left mid-match rejoins by name and gets the seat back; the old token stops working', async () => {
+  const host = await post('/api/rooms/create', { name: '甲' });
+  const hostView = await listen(host.code, host.token);
+  const guest = await post('/api/rooms/join', { code: host.code, name: '回来' });
+  for (let i = 0; i < 2; i++) await post('/api/rooms/add-bot', { code: host.code, token: host.token });
+  await post('/api/rooms/start', { code: host.code, token: host.token });
+  await post('/api/rooms/leave', { code: guest.code, token: guest.token });
+  const back = await post('/api/rooms/join', { code: host.code, name: '回来' });
+  assert.equal(back.playerId, guest.playerId);
+  assert.notEqual(back.token, guest.token);
+  assert.equal((await post('/api/rooms/pass', { code: host.code, token: guest.token }, 401)).error, 'bad_token');
+  await until(() => hostView.view?.players.find((p) => p.id === guest.playerId)?.leftEarly === false);
+  await listen(host.code, back.token);
+  assert.equal((await post('/api/rooms/join', { code: host.code, name: '回来' }, 409)).error, 'name_in_use');
+  await post('/api/rooms/leave', { code: host.code, token: back.token });
+  await post('/api/rooms/leave', { code: host.code, token: host.token });
+});
