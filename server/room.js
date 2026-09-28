@@ -14,10 +14,12 @@ import { HttpError } from './http.js';
 export const DEFAULT_DELAYS = {
   turnMs: 15000, returnMs: 30000, botMs: 700, nextHandMs: 30000,
   tributeMs: 5000, returnRevealMs: 3000, dealRoundMs: 120, claimGraceMs: 3000,
+  restoreGraceMs: 20000, // after a server restart, humans count as present this long so they can reconnect
 };
 // A bot holding the black 3 shows it this long after it was dealt to them.
 const BOT_CLAIM_MIN_MS = 1000;
 const BOT_CLAIM_MAX_MS = 2500;
+const PHASES = ['lobby', 'dealing', 'tribute', 'returning', 'return_reveal', 'playing', 'hand_over', 'match_over'];
 const PAUSABLE = ['dealing', 'tribute', 'returning', 'return_reveal', 'playing', 'hand_over'];
 // From these phases on, returned cards are public.
 const RETURNS_PUBLIC = ['return_reveal', 'playing', 'hand_over', 'match_over'];
@@ -32,6 +34,8 @@ const randomId = () => `p_${crypto.randomBytes(6).toString('hex')}`;
 // All game rules live in ../engine; this class only sequences them and guards who may act.
 export class Room {
   // accountView(userId) -> public account or null; onMatchOver(room) persists a finished match.
+  // Every piece of game state set here must also be written by toSnapshot() and read by fromSnapshot(),
+  // so a room survives a server restart; only runtime wiring (callbacks, timers, online) is left out.
   constructor({
     code, delays = DEFAULT_DELAYS, timers = globalThis, now = Date.now, random = Math.random, onChange = () => {},
     accountView = () => null, onMatchOver = () => {}, counterFor = () => false,
@@ -66,6 +70,8 @@ export class Room {
     this.pausedAt = null;
     this.pausedRemaining = null; // ms left on the deadline when the host paused
     this.online = new Set();
+    this.graceUntil = null; // set after a restore: until then offline humans are not played automatically
+    this.graceTimer = null;
     this.match = null;
     this.prepared = null;
     this.returns = [];
@@ -298,7 +304,7 @@ export class Room {
 
   readyToAdvance() {
     if (this.phase !== 'hand_over' || this.paused) return false;
-    const waiting = this.players.flatMap((p, seat) => (!p.isBot && !p.leftEarly && this.online.has(p.id) ? [seat] : []));
+    const waiting = this.players.flatMap((p, seat) => (!p.isBot && !p.leftEarly && this.isPresent(p) ? [seat] : []));
     return waiting.length > 0 && waiting.every((seat) => this.ready.has(seat));
   }
 
@@ -623,7 +629,12 @@ export class Room {
 
   isAutomatic(seat) {
     const p = this.players[seat];
-    return p.isBot || p.leftEarly || !this.online.has(p.id);
+    return p.isBot || p.leftEarly || !this.isPresent(p);
+  }
+
+  // Online, or offline during the reconnect grace after a restore.
+  isPresent(p) {
+    return this.online.has(p.id) || this.graceUntil !== null;
   }
 
   // `resumed`: keep the deadline restored by resume() instead of starting a fresh turn clock.
@@ -650,7 +661,11 @@ export class Room {
       } else if (this.noTimer()) {
         this.setDeadline(null);
       } else {
-        if (!resumed || this.deadline === null) this.setDeadline(this.turnMs());
+        if (!resumed || this.deadline === null) {
+          // Offline during the reconnect grace: the turn clock starts only once the grace is over.
+          const graceLeft = this.online.has(this.players[seat].id) ? 0 : Math.max(0, (this.graceUntil ?? 0) - this.now());
+          this.setDeadline(graceLeft + this.turnMs());
+        }
         this.setTimer(untilDeadline(), () => this.autoPlay(seat, true));
       }
     } else if (this.phase === 'hand_over') {
@@ -714,6 +729,154 @@ export class Room {
 
   destroy() {
     this.clearTimer();
+    if (this.graceTimer) this.timers.clearTimeout(this.graceTimer);
+    this.graceTimer = null;
+  }
+
+  // ---- save and restore across a server restart ------------------------------
+
+  // Plain JSON-safe state. Clock values are relative (ms left, ms elapsed) so they survive the restart;
+  // timers are never saved, fromSnapshot() schedules them again.
+  toSnapshot() {
+    const now = this.now();
+    const ref = this.paused ? this.pausedAt : now; // the deal clock is frozen while paused
+    const d = this.dealing;
+    return structuredClone({
+      format: 1,
+      code: this.code,
+      creatorIp: this.creatorIp ?? null,
+      players: this.players,
+      hostId: this.hostId,
+      decks: this.decks,
+      turnSeconds: this.turnSeconds,
+      dealMode: this.dealMode,
+      phase: this.phase,
+      dealing: d && {
+        order: d.order, total: d.total, ended: d.ended, elapsedMs: ref - d.startedAt,
+        claimInMs: Object.fromEntries(Object.entries(d.claimAt).map(([seat, at]) => [seat, at - ref])),
+      },
+      claimedBy: this.claimedBy,
+      revealHands: this.revealHands,
+      ready: [...this.ready],
+      paused: this.paused,
+      pausedRemaining: this.pausedRemaining,
+      match: this.match,
+      prepared: this.prepared,
+      returns: this.returns,
+      hand: this.hand,
+      actions: this.actions,
+      events: this.events,
+      playedCards: this.playedCards,
+      seatActions: this.seatActions,
+      lastTrick: this.lastTrick,
+      result: this.result,
+      deadlineInMs: this.deadline === null ? null : Math.max(0, this.deadline - now),
+      deadlineSpan: this.deadlineSpan,
+      log: this.log,
+      handRecord: this.handRecord && { ...this.handRecord, lastAt: undefined, sinceLastMs: now - this.handRecord.lastAt },
+      handLog: this.handLog,
+      ratingsBefore: this.ratingsBefore ?? null,
+      startedAt: this.startedAt,
+      ratingResult: this.ratingResult,
+      matchId: this.matchId,
+      version: this.version,
+    });
+  }
+
+  // deps: the same options as the constructor, minus `code`. Throws on a snapshot it cannot use.
+  static fromSnapshot(data, deps = {}) {
+    const s = structuredClone(data);
+    if (s?.format !== 1 || typeof s.code !== 'string' || !Array.isArray(s.players) || !PHASES.includes(s.phase)) {
+      throw new Error('bad_snapshot');
+    }
+    const room = new Room({ ...deps, code: s.code });
+    const now = room.now();
+    Object.assign(room, {
+      creatorIp: s.creatorIp,
+      players: s.players,
+      hostId: s.hostId,
+      decks: s.decks,
+      turnSeconds: s.turnSeconds,
+      dealMode: s.dealMode,
+      phase: s.phase,
+      claimedBy: s.claimedBy,
+      revealHands: s.revealHands,
+      ready: new Set(s.ready),
+      paused: s.paused,
+      pausedAt: s.paused ? now : null,
+      pausedRemaining: s.pausedRemaining,
+      match: s.match,
+      prepared: s.prepared,
+      returns: s.returns,
+      hand: s.hand,
+      actions: s.actions,
+      events: s.events,
+      playedCards: s.playedCards,
+      seatActions: s.seatActions,
+      lastTrick: s.lastTrick,
+      result: s.result,
+      deadline: s.deadlineInMs === null ? null : now + s.deadlineInMs,
+      deadlineSpan: s.deadlineSpan,
+      log: s.log,
+      handLog: s.handLog,
+      ratingsBefore: s.ratingsBefore,
+      startedAt: s.startedAt,
+      ratingResult: s.ratingResult,
+      matchId: s.matchId,
+      version: s.version,
+    });
+    if (s.dealing) {
+      const { elapsedMs, claimInMs, ...rest } = s.dealing;
+      room.dealing = {
+        ...rest,
+        startedAt: now - elapsedMs,
+        claimAt: Object.fromEntries(Object.entries(claimInMs).map(([seat, ms]) => [seat, now + ms])),
+      };
+    }
+    if (s.handRecord) {
+      const { sinceLastMs, ...record } = s.handRecord;
+      room.handRecord = { ...record, lastAt: now - sinceLastMs };
+    }
+    for (const p of room.players) room.viewFor(p.id); // fails here, not later in a timer, if the state is unusable
+    try {
+      room.startGrace();
+      room.schedule(true);
+    } catch (err) {
+      room.destroy();
+      throw err;
+    }
+    room.changed();
+    return room;
+  }
+
+  // Nobody is connected right after a restore: give humans time to reconnect before auto-playing for them.
+  startGrace() {
+    const grace = this.delays.restoreGraceMs;
+    if (!grace || !this.players.some((p) => !p.isBot && !p.leftEarly && !p.gone)) return;
+    this.graceUntil = this.now() + grace;
+    // A human's pending turn or return keeps what was left of its clock, on top of the grace.
+    const humanTurn = this.phase === 'playing' && !this.players[this.hand.turn].isBot && !this.players[this.hand.turn].leftEarly;
+    const humanReturn = this.phase === 'returning'
+      && this.returns.some((r) => r.card === null && !this.players[r.from].isBot && !this.players[r.from].leftEarly);
+    if (!this.paused && (humanTurn || humanReturn) && !this.noTimer()) {
+      const left = this.deadline === null ? (humanTurn ? this.turnMs() : this.delays.returnMs) : this.deadline - this.now();
+      this.deadline = this.now() + left + grace;
+      this.deadlineSpan = left + grace;
+    }
+    this.graceTimer = this.timers.setTimeout(() => {
+      this.graceTimer = null;
+      this.graceUntil = null;
+      try {
+        if (this.paused) return;
+        if (this.readyToAdvance()) return this.advanceAfterHand();
+        if (this.phase === 'playing' || this.phase === 'returning') {
+          this.schedule(true);
+          this.changed();
+        }
+      } catch (err) {
+        console.error(`room ${this.code}: ending the reconnect grace failed`, err);
+      }
+    }, grace);
   }
 
   // ---- helpers -------------------------------------------------------------

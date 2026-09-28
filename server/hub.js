@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { Room, DEFAULT_DELAYS } from './room.js';
 import { HttpError } from './http.js';
 import { publicAccount } from './accounts.js';
+import { transaction } from './db.js';
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const KEEPALIVE_MS = 20000;
@@ -11,6 +12,8 @@ export const MAX_ROOMS = 200;
 export const MAX_ROOMS_PER_IP = 5;
 export const MAX_STREAMS_PER_PLAYER = 3;
 export const MAX_STREAMS = 2000;
+// Snapshots older than this at startup are dropped: the players have long given up on those tables.
+export const SNAPSHOT_MAX_AGE_MS = 15 * 60 * 1000;
 
 function randomCode() {
   let code = '';
@@ -30,6 +33,7 @@ export class Hub {
     this.streams = 0;
     this.accountCache = new Map(); // userId -> public account; ratings only change in recordMatch
     this.counterCache = new Map(); // userId -> card counter enabled
+    this.stopped = false; // set on shutdown: closing streams must not change any room any more
   }
 
   counterFor(userId) {
@@ -64,8 +68,15 @@ export class Hub {
     }
     let code;
     do code = randomCode(); while (this.rooms.has(code));
-    const room = new Room({
-      code,
+    const room = new Room({ code, ...this.roomDeps() });
+    room.creatorIp = ip;
+    this.rooms.set(code, room);
+    const player = room.addHuman(name, user);
+    return { room, player };
+  }
+
+  roomDeps() {
+    return {
       delays: this.delays,
       timers: this.timers,
       now: this.now,
@@ -73,11 +84,55 @@ export class Hub {
       accountView: (userId) => this.accountView(userId),
       onMatchOver: (r) => this.recordMatch(r),
       counterFor: (userId) => this.counterFor(userId),
+    };
+  }
+
+  // ---- restart: stop, save, restore ------------------------------------------
+
+  // Freeze every room (no more timers) and close all streams; browsers reconnect on their own.
+  stop() {
+    this.stopped = true;
+    for (const room of this.rooms.values()) room.destroy();
+    for (const byPlayer of this.clients.values()) for (const set of byPlayer.values()) for (const res of [...set]) res.end();
+    this.clients.clear();
+  }
+
+  // Replace the saved rooms with every room that still has a human in it. Returns how many were saved.
+  saveAll(db) {
+    const rooms = [...this.rooms.values()].filter((r) => r.humanCount() > 0);
+    const savedAt = this.now();
+    transaction(db, () => {
+      db.exec('DELETE FROM room_snapshots');
+      const insert = db.prepare('INSERT INTO room_snapshots (code, data, saved_at) VALUES (?, ?, ?)');
+      for (const room of rooms) insert.run(room.code, JSON.stringify(room.toSnapshot()), savedAt);
     });
-    room.creatorIp = ip;
-    this.rooms.set(code, room);
-    const player = room.addHuman(name, user);
-    return { room, player };
+    return rooms.length;
+  }
+
+  // Bring back rooms saved by saveAll() shortly before; a snapshot is only ever used once.
+  // A snapshot that cannot be restored is logged and skipped. Returns how many rooms came back.
+  restoreAll(db) {
+    const rows = db.prepare('SELECT code, data, saved_at FROM room_snapshots ORDER BY saved_at').all();
+    const oldest = this.now() - SNAPSHOT_MAX_AGE_MS;
+    let restored = 0;
+    for (const row of rows) {
+      if (row.saved_at < oldest) continue;
+      if (this.rooms.has(row.code) || this.rooms.size >= MAX_ROOMS) {
+        console.warn(`room ${row.code}: not restored (code in use or server full)`);
+        continue;
+      }
+      try {
+        const data = JSON.parse(row.data);
+        if (data?.code !== row.code) throw new Error('code_mismatch');
+        const room = Room.fromSnapshot(data, this.roomDeps());
+        this.rooms.set(room.code, room);
+        restored += 1;
+      } catch (err) {
+        console.error(`room ${row.code}: snapshot could not be restored`, err);
+      }
+    }
+    db.exec('DELETE FROM room_snapshots');
+    return restored;
   }
 
   recordMatch(room) {
@@ -205,7 +260,7 @@ export class Hub {
       set.delete(res);
       if (set.size === 0) {
         byPlayer.delete(player.id);
-        if (this.rooms.get(room.code) === room) room.setOnline(player.id, false);
+        if (!this.stopped && this.rooms.get(room.code) === room) room.setOnline(player.id, false);
       }
     };
     req.on('close', close);

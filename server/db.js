@@ -83,6 +83,12 @@ const MIGRATIONS = [
      action TEXT NOT NULL,
      at INTEGER NOT NULL
    );`,
+  // Live rooms saved on shutdown and restored on the next start (see Hub.saveAll / restoreAll).
+  `CREATE TABLE room_snapshots (
+     code TEXT PRIMARY KEY,
+     data TEXT NOT NULL,
+     saved_at INTEGER NOT NULL
+   );`,
 ];
 
 export function openDatabase(file) {
