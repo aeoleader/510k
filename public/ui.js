@@ -5,7 +5,7 @@ import { TIER_ICONS } from '/vendor/tier-icons.js';
 export const SUIT_SYMBOL = { S: '♠', H: '♥', C: '♣', D: '♦' };
 export const RANK_LABEL = { T: '10' };
 export const TYPE_LABEL = {
-  single: '单张', pair: '对子', triple: '三张', triple_pair: '三带一对', straight: '顺子', pairs: '连对',
+  single: '单张', pair: '对子', triple: '三张', triple_pair: '三带一对', straight: '顺子', pairs: '连对', triples: '连三',
   x510k: '杂 510K', p510k: '纯 510K', bomb: '炸弹', joker_bomb: '王炸',
 };
 const TIER_ICON = { 1: 'shield', 2: 'shield', 3: 'medal', 4: 'award', 5: 'gem', 6: 'crown' };
