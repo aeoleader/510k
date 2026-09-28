@@ -14,6 +14,8 @@ Environment=PORT=3200
 Environment=HOST=::
 Environment=DATA_DIR=/var/lib/510k-3200
 StateDirectory=510k-3200
+StateDirectoryMode=0700
+UMask=0077
 ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning /opt/510k-3200/server/index.js
 Restart=always
 RestartSec=2
