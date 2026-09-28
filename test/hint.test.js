@@ -14,6 +14,11 @@ test('follow single: smallest that beats, not breaking pairs or bombs first', ()
   assert.ok(list.findIndex((c) => c.length === 1 && c[0][0] === '9') > 1, 'breaking the 9 bomb comes last among singles');
 });
 
+test('follow single: avoid breaking a 510K when another single works', () => {
+  const list = hints(['5S0', '9D0', 'TS0', 'KH0'], identify(['4D0'])).map((h) => h.cards);
+  assert.deepEqual(list[0], ['9D0']);
+});
+
 test('follow pair / straight / pair run of the same length', () => {
   const hand = ['3S0', '4S0', '5S0', '6S0', '7S0', '8S0', '8H0', '9S0', '9H0', 'TS0', 'TH0'];
   assert.deepEqual(cardsOf(hints(hand, identify(['7D0', '7C0'])))[0], ['8H0', '8S0']);

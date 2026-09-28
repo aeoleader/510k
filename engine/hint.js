@@ -15,7 +15,9 @@ function groupByValue(hand) {
   return groups;
 }
 
-// [breaks a bomb, splits a group] — lower is better.
+const count510k = (count) => Math.min(count(5), count(10), count(13));
+
+// [breaks a bomb, breaks a 510K, splits a group] — lower is better.
 function costOf(groups, cards) {
   const used = new Map();
   for (const c of cards) if (!isJoker(c)) used.set(valueOf(c), (used.get(valueOf(c)) || 0) + 1);
@@ -26,8 +28,12 @@ function costOf(groups, cards) {
     if (have >= 4 && k < have) bomb += 1;
     else if (k < have) split += 1;
   }
-  return [bomb, split];
+  const before = count510k((v) => groups.get(v)?.length ?? 0);
+  const after = count510k((v) => (groups.get(v)?.length ?? 0) - (used.get(v) ?? 0));
+  return [bomb, after < before ? 1 : 0, split];
 }
+
+const compareCost = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
 
 function runs(groups, need, minLen, exactLen) {
   const out = [];
@@ -61,7 +67,7 @@ function triplePairs(groups) {
     const pair = [...groups]
       .filter(([v, p]) => v !== t && p.length >= 2)
       .map(([, p]) => p.slice(0, 2))
-      .sort((a, b) => costOf(groups, a)[0] - costOf(groups, b)[0] || costOf(groups, a)[1] - costOf(groups, b)[1] || valueOf(a[0]) - valueOf(b[0]))[0];
+      .sort((a, b) => compareCost(costOf(groups, a), costOf(groups, b)) || valueOf(a[0]) - valueOf(b[0]))[0];
     if (pair) out.push([...g.slice(0, 3), ...pair]);
   }
   return out;
@@ -130,8 +136,9 @@ export function hints(hand, top = null) {
 
   const normals = toCandidates(normal).sort((a, b) =>
     a.cost[0] - b.cost[0]
-    || (top ? 0 : LEAD_ORDER[a.combo.type] - LEAD_ORDER[b.combo.type])
     || a.cost[1] - b.cost[1]
+    || (top ? 0 : LEAD_ORDER[a.combo.type] - LEAD_ORDER[b.combo.type])
+    || a.cost[2] - b.cost[2]
     || a.combo.value - b.combo.value
     || b.combo.length - a.combo.length);
   const special = toCandidates(specials(groups, jokers)).sort((a, b) => compareStrength(a.combo, b.combo));
