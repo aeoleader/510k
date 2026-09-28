@@ -1,0 +1,26 @@
+# systemd unit for one 5-10-K instance. Install as /etc/systemd/system/510k-<port>.service
+# and replace 3200 with the port. Code lives in /opt/510k-<port>, data in /var/lib/510k-<port>.
+[Unit]
+Description=5-10-K card game (port 3200)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cardroom
+Group=cardroom
+WorkingDirectory=/opt/510k-3200
+Environment=PORT=3200
+Environment=HOST=::
+Environment=DATA_DIR=/var/lib/510k-3200
+StateDirectory=510k-3200
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning /opt/510k-3200/server/index.js
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
