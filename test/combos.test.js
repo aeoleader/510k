@@ -65,6 +65,7 @@ test('special ordering: x510k < p510k < 4-bomb < ... < 6-bomb < joker pair < 7-b
   const b7 = ['3S0', '3H0', '3C0', '3D0', '3S1', '3H1', '3C1'];
   const b8 = ['3S0', '3H0', '3C0', '3D0', '3S1', '3H1', '3C1', '3D1'];
   const j3 = ['LJ0', 'LJ1', 'BJ0'];
+  const b9 = ['3S0', '3H0', '3C0', '3D0', '3S1', '3H1', '3C1', '3D1', '3S2'];
 
   assert.ok(win(x, ['2S0', '2H0', '2D0', 'AS0', 'AH0']));
   assert.ok(win(x, ['9S0', 'TH0', 'JD0', 'QS0', 'KC0']));
@@ -79,5 +80,7 @@ test('special ordering: x510k < p510k < 4-bomb < ... < 6-bomb < joker pair < 7-b
   assert.ok(!win(b6, j2));
   assert.ok(win(b7, j2));
   assert.ok(win(j3, b8));
+  assert.ok(win(j3, b9), 'a 9-bomb ties the level of 3 jokers, but the joker bomb outranks it');
+  assert.ok(!win(b9, j3));
   assert.ok(!win(['LJ0', 'BJ0'], ['LJ1', 'BJ1']), 'equal joker bombs do not beat');
 });
