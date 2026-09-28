@@ -388,6 +388,7 @@ function renderEntry() {
       <div class="signed-in">
         <div><div class="field">已登录</div><div class="signed-name">${esc(state.account.username)}</div></div>
         ${badgeHtml(state.account)}
+        <a class="btn btn-sm push-right" href="/u/${encodeURIComponent(state.account.username)}">我的主页</a>
         <button type="button" id="logoutBtn" class="btn btn-ghost btn-sm">退出</button>
       </div>`;
     return;
@@ -1130,6 +1131,7 @@ function resultDialog(v) {
       ${ratingLine}
       <div class="actions">
         ${over && v.matchId && state.account ? `<a class="btn" href="/replay/${v.matchId}" target="_blank" rel="noopener">看回放</a>` : ''}
+        ${over && state.account ? `<a class="btn" href="/u/${encodeURIComponent(state.account.username)}" target="_blank" rel="noopener">我的战绩</a>` : ''}
         ${over
           ? (v.you?.isHost ? '<button id="restartBtn" class="btn btn-primary">回到大厅</button>' : '<span class="note">等待房主操作</span>')
           : `${timed ? '<span class="note">下一局 <span data-secs></span> 秒后开始</span>' : '<span class="note">大家准备好就开始下一局</span>'}${readyControls(v)}${v.you?.isHost ? '<button id="nextBtn" class="btn">马上开始</button>' : ''}`}
