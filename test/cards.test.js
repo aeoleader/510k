@@ -72,3 +72,13 @@ test('rng yields values in [0,1)', () => {
     assert.ok(x >= 0 && x < 1);
   }
 });
+
+test('deal exposes each seat\'s cards in dealt order; sorting them gives the hands', () => {
+  const { hands, order } = deal({ playerCount: 5, decks: 2, seed: 11 });
+  assert.equal(order.length, 5);
+  order.forEach((o, i) => {
+    assert.equal(o.length, hands[i].length);
+    assert.deepEqual([...o].sort(compareCards), hands[i]);
+  });
+  assert.ok(order.some((o, i) => o.join() !== hands[i].join()), 'dealt order is not already sorted');
+});

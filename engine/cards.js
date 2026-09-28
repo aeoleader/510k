@@ -82,7 +82,8 @@ export function deal({ playerCount, decks, seed }) {
   }
   const cards = shuffle(buildDeck(decks), createRng(seed));
   const per = Math.floor(cards.length / playerCount);
-  const hands = Array.from({ length: playerCount }, (_, i) =>
-    cards.slice(i * per, (i + 1) * per).sort(compareCards));
-  return { hands, leftover: cards.slice(per * playerCount).sort(compareCards) };
+  // order: each seat's cards as dealt (round r gives every seat its r-th card); hands: sorted.
+  const order = Array.from({ length: playerCount }, (_, i) => cards.slice(i * per, (i + 1) * per));
+  const hands = order.map((h) => [...h].sort(compareCards));
+  return { hands, order, leftover: cards.slice(per * playerCount).sort(compareCards) };
 }

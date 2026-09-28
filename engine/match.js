@@ -27,11 +27,15 @@ export function firstLeader(match) {
 
 // Deal the next hand, hand leftovers to the leader and apply tribute.
 // Card returns (receiver picks a card) are finished later with completeReturns().
-export function prepareHand(match) {
+// `leader` overrides who leads (and takes the leftover), e.g. whoever showed the black 3.
+export function prepareHand(match, { leader: override = null } = {}) {
   const handNo = match.handNo;
   const seed = handSeed(match, handNo);
   const { hands: dealt, leftover } = deal({ playerCount: match.playerCount, decks: match.decks, seed });
-  const leader = match.last ? match.last.ranking[0] : firstLeader(match);
+  if (override !== null && !(Number.isInteger(override) && override >= 0 && override < match.playerCount)) {
+    throw new Error('bad_leader');
+  }
+  const leader = override ?? (match.last ? match.last.ranking[0] : firstLeader(match));
   const withLeftover = dealt.map((h, i) => (i === leader ? [...h, ...leftover] : h));
   const pairs = match.last ? tributePairs({ teams: match.teams, ...match.last }) : [];
   const tribute = applyTribute({ hands: withLeftover, pairs, decks: match.decks });

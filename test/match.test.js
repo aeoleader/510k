@@ -74,3 +74,20 @@ test('match is over after 10 hands', () => {
   assert.equal(isMatchOver(m), true);
   assert.deepEqual(m.totals, [600, 400, 400, 400, 200]);
 });
+
+test('prepareHand: a leader override leads and takes the leftover; without it nothing changes', () => {
+  let m = createMatch({ playerCount: 5, decks: 2, seed: 99 });
+  const plain = prepareHand(m);
+  const other = (plain.leader + 2) % 5;
+  const p = prepareHand(m, { leader: other });
+  assert.equal(p.leader, other);
+  assert.equal(p.hands[other].length, 24);
+  assert.deepEqual(p.leftover, plain.leftover);
+  assert.deepEqual(prepareHand(m, {}), plain);
+  assert.throws(() => prepareHand(m, { leader: 5 }), /bad_leader/);
+  ({ match: m } = recordHand(m, { ranking: [3, 0, 1, 2, 4], finished: [3, 0, 1, 2], captured: [0, 0, 0, 0, 0] }));
+  assert.equal(prepareHand(m).leader, 3, 'previous head by default');
+  const q = prepareHand(m, { leader: 1 });
+  assert.equal(q.leader, 1);
+  assert.deepEqual(q.tribute.pairs, [{ from: 4, to: 3 }], 'tribute still follows the previous hand');
+});
