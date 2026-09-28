@@ -943,7 +943,7 @@ html.landscape .card.sm { --w: 26px; }
 html.landscape .center-area { gap: 4px; }
 html.landscape .center-area .trick-label { font-size: 11px; }
 html.landscape .points-pill { padding: 2px 10px; font-size: 13px; }
-html.landscape .dock { padding-top: 0; padding-bottom: max(6px, env(safe-area-inset-bottom)); }
+html.landscape .dock { padding-top: 0; }
 html.landscape .action-bar { min-height: 38px; gap: 6px; }
 html.landscape .action-bar .btn { min-height: 34px; padding: 0 14px; }
 html.landscape .timer { width: 32px; height: 32px; font-size: 12px; }

@@ -1004,8 +1004,9 @@ function armFullscreenOnTap() {
   const go = () => {
     document.removeEventListener('click', go, true);
     document.removeEventListener('touchend', go, true);
-    fullscreenArmed = false;
-    if (isLandscape()) enterFullscreen().catch(() => { /* the browser said no; keep playing windowed */ });
+    // Stay armed until the request settles: entering fullscreen fires resize, which would re-arm.
+    const settle = isLandscape() ? enterFullscreen() : Promise.resolve();
+    settle.catch(() => { /* the browser said no; keep playing windowed */ }).then(() => { fullscreenArmed = false; });
   };
   document.addEventListener('click', go, true);
   document.addEventListener('touchend', go, true);
