@@ -1,0 +1,13 @@
+{
+  "name": "510k",
+  "version": "0.1.0",
+  "private": true,
+  "description": "5-10-K online card game for 4-8 players.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
