@@ -287,6 +287,37 @@ test('accounts: a full rated match updates the rating and records the match', as
   await post('/api/rooms/leave', { code, token });
 });
 
+test('paginated match history over HTTP: auth, filtering, cursor and validation', async () => {
+  const { accountToken } = await post('/api/auth/register', { username: 'Paginated', password: 'secret1' });
+  const matchIds = [];
+  for (let i = 0; i < 3; i++) {
+    const { code, token } = await post('/api/rooms/create', { accountToken });
+    const me = await listen(code, token);
+    for (let j = 0; j < 3; j++) await post('/api/rooms/add-bot', { code, token });
+    const { view } = await playMatch(code, token, me);
+    matchIds.push(view.matchId);
+    await post('/api/rooms/leave', { code, token });
+  }
+
+  assert.equal((await post('/api/users/matches', { username: 'me' }, 401)).error, 'login_required');
+  assert.equal((await post('/api/users/matches', { accountToken, username: 'nobody' }, 404)).error, 'no_user');
+  assert.equal((await post('/api/users/matches', { accountToken, before: 'nope' }, 400)).error, 'bad_before');
+  assert.equal((await post('/api/users/matches', { accountToken, before: 0 }, 400)).error, 'bad_before');
+  assert.equal((await post('/api/users/matches', { accountToken, outcome: 'meh' }, 400)).error, 'bad_outcome');
+
+  const page = await post('/api/users/matches', { accountToken, username: 'me' });
+  assert.equal(page.total, 3);
+  assert.equal(page.nextBefore, null, 'fewer matches than a page');
+  assert.deepEqual(page.matches.map((m) => m.matchId), [...matchIds].reverse(), 'newest first');
+  assert.equal(page.matches[0].hands.length, 10);
+
+  const before = await post('/api/users/matches', { accountToken, before: matchIds[2] });
+  assert.deepEqual(before.matches.map((m) => m.matchId), [matchIds[1], matchIds[0]]);
+
+  const wins = await post('/api/users/matches', { accountToken, outcome: 'win' });
+  assert.ok(wins.matches.every((m) => m.outcome === 'win'));
+});
+
 test('admin: only admins manage card counters, and counter data reaches only that player', async () => {
   const boss = await post('/api/auth/login', { username: 'Boss', password: 'secret1' });
   const ghost = await post('/api/auth/register', { username: 'Ghost', password: 'secret1' });

@@ -1,0 +1,17 @@
+/* 历史对局: filter + pagination controls for the profile page's match history. */
+
+.history-block { display: grid; gap: 12px; }
+.history-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.history-head h2 { margin: 0; font-size: 15px; font-weight: 600; color: var(--muted); }
+.history-head h2 span { font-weight: 400; }
+
+a.hand-chip { color: inherit; text-decoration: none; display: inline-block; }
+a.hand-chip:hover, a.hand-chip:focus-visible { border-color: var(--line-strong); }
+
+#historyMore { margin-top: 2px; }
+
+@media (max-width: 480px) {
+  .history-head { justify-content: flex-start; }
+  .history-head #historyFilter { width: 100%; }
+  .history-head #historyFilter button { flex: 1; }
+}

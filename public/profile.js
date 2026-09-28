@@ -9,6 +9,12 @@ const fixed = (x) => (x === null ? '暂无' : x.toFixed(1));
 const date = (t) => new Date(t).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
 const dateTime = (t) => new Date(t).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
+const FILTERS = [['all', '全部'], ['win', '胜'], ['loss', '负']];
+
+let targetName = null;
+// State for the paginated 历史对局 section (independent of the profile snapshot's own totals).
+const history = { filter: 'all', items: [], nextBefore: null, total: null, loading: false };
+
 function readToken() {
   try { return localStorage.getItem('510k:accountToken'); } catch { return null; }
 }
@@ -21,6 +27,7 @@ async function load() {
     $('status').textContent = '玩家地址不正确。';
     return;
   }
+  targetName = name;
   const res = await fetch('/api/users/profile', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -32,6 +39,34 @@ async function load() {
     return;
   }
   render(data);
+  loadHistory({ reset: true });
+}
+
+// Fetches one page of /api/users/matches for the current filter and renders it.
+async function loadHistory({ reset = false } = {}) {
+  if (history.loading) return;
+  history.loading = true;
+  renderHistoryControls();
+  const res = await fetch('/api/users/matches', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      accountToken: readToken() ?? undefined,
+      username: targetName,
+      outcome: history.filter === 'all' ? undefined : history.filter,
+      before: reset ? undefined : history.nextBefore ?? undefined,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  history.loading = false;
+  if (!res.ok) {
+    renderHistoryControls();
+    return;
+  }
+  history.items = reset ? data.matches : [...history.items, ...data.matches];
+  history.nextBefore = data.nextBefore;
+  history.total = data.total;
+  renderHistory();
 }
 
 function render(d) {
@@ -67,12 +102,56 @@ function render(d) {
       ${peopleBlock('常见队友', d.teammates, 'with', '还没有和注册玩家组过队')}
       ${peopleBlock('常见对手', d.opponents, 'against', '还没有遇到注册玩家')}
     </section>
-    <section class="panel-block">
-      <h2>最近 ${Math.min(20, d.recent.length)} 轮</h2>
-      ${d.recent.length ? `<div class="recent">${d.recent.map(recentRow).join('')}</div>` : '<p class="muted">还没有打完过一轮。</p>'}
+    <section class="panel-block history-block">
+      <div class="history-head">
+        <h2>历史对局<span class="muted" id="historyCount"></span></h2>
+        <span class="segmented" role="group" aria-label="按结果筛选" id="historyFilter">
+          ${FILTERS.map(([key, label]) => `<button type="button" data-filter="${key}" aria-pressed="${key === history.filter}">${label}</button>`).join('')}
+        </span>
+      </div>
+      <div class="recent" id="historyRows"></div>
+      <p class="muted" id="historyEmpty" hidden>还没有符合条件的对局。</p>
+      <button type="button" class="btn btn-ghost btn-block" id="historyMore" hidden>加载更多</button>
     </section>`;
   setupChart(d.history);
 }
+
+function renderHistory() {
+  const rows = $('historyRows');
+  if (rows) rows.innerHTML = history.items.map(recentRow).join('');
+  const empty = $('historyEmpty');
+  if (empty) empty.hidden = history.items.length > 0;
+  const count = $('historyCount');
+  if (count) count.textContent = history.total === null ? '' : `，共 ${history.total} 轮`;
+  renderHistoryControls();
+}
+
+function renderHistoryControls() {
+  const more = $('historyMore');
+  if (more) {
+    more.hidden = !history.nextBefore && !history.loading;
+    more.disabled = history.loading;
+    more.textContent = history.loading ? '加载中…' : '加载更多';
+  }
+  for (const b of document.querySelectorAll('#historyFilter [data-filter]')) {
+    b.setAttribute('aria-pressed', String(b.dataset.filter === history.filter));
+  }
+}
+
+document.addEventListener('click', (e) => {
+  const filterBtn = e.target.closest('#historyFilter [data-filter]');
+  if (filterBtn) {
+    if (filterBtn.dataset.filter === history.filter) return;
+    history.filter = filterBtn.dataset.filter;
+    history.items = [];
+    history.nextBefore = null;
+    history.total = null;
+    renderHistoryControls();
+    loadHistory({ reset: true });
+    return;
+  }
+  if (e.target.closest('#historyMore')) loadHistory({ reset: false });
+});
 
 function peopleBlock(title, list, key, empty) {
   const rows = list.map((p) => {
@@ -91,7 +170,7 @@ function recentRow(m) {
     : esc(shortName(m.players[side].name)));
   const score = sides.map((side) => `<span class="${side === mySide ? 'mine' : ''}">${m.totals[side]}</span>`).join(' : ');
   const tags = Object.entries(m.highlights).map(([tag, n]) => `<span class="tag tag-${tag}">${TAGS[tag] ?? tag}${n > 1 ? ` ×${n}` : ''}</span>`).join('');
-  const hands = m.hands.map((h) => `<span class="hand-chip ${h.mine === h.best ? 'top' : ''}" title="第 ${h.handNo} 局${h.head ? '，头游' : ''}">${h.mine}${h.head ? '<i>头</i>' : ''}</span>`).join('');
+  const hands = m.hands.map((h) => `<a class="hand-chip ${h.mine === h.best ? 'top' : ''}" href="/replay/${m.matchId}?hand=${h.handNo}" title="第 ${h.handNo} 局${h.head ? '，头游' : ''}">${h.mine}${h.head ? '<i>头</i>' : ''}</a>`).join('');
   const delta = m.ratingDelta === null ? '' : `<span class="delta ${m.ratingDelta >= 0 ? 'up' : 'down'}">${m.ratingDelta >= 0 ? '+' : ''}${m.ratingDelta}</span>`;
   return `
     <details class="recent-row">

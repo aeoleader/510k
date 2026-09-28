@@ -2,6 +2,8 @@ import { HttpError } from './http.js';
 import { publicAccount } from './accounts.js';
 
 const RECENT_MATCHES = 20;
+const MATCHES_PAGE_SIZE = 20;
+const MATCHES_BATCH = 50; // matches fetched per DB round-trip while scanning for an outcome filter
 const STATS_WINDOW = 200; // matches considered for rates and partners
 const BEST_PARTNER_MIN_MATCHES = 3;
 const BOMB_TYPES = ['bomb', 'joker_bomb'];
@@ -25,6 +27,43 @@ function outcomeFor(match, players, seat, sweeps) {
   const ahead = players.filter((p) => p.seat !== seat && beats(p, me) > 0).length;
   if (ahead > 0) return 'loss';
   return players.some((p) => p.seat !== seat && beats(p, me) === 0) ? 'draw' : 'win';
+}
+
+// Sweep counts per team from a match's recorded hands; [0, 0] when hands were never recorded.
+function sweepsByTeam(handRows) {
+  const teamSweeps = [0, 0];
+  for (const h of handRows) if (h.result.sweep && h.result.winner !== null) teamSweeps[h.result.winner] += 1;
+  return teamSweeps;
+}
+
+// One row of match history, shared by the profile's recent list and the paginated match history.
+// `m` is a matches row joined with this user's match_players columns (seat, team, rating_before/delta, left_early).
+// `rawTags` are this match's non-auto/sweep highlight rows ({ tag, seats } with seats as JSON text).
+function buildMatchRow(m, players, handRows, teamSweeps, outcome, rawTags) {
+  const side = m.mode === 'team' ? m.team : m.seat;
+  const tags = rawTags
+    .filter((hl) => parse(hl.seats).includes(m.seat))
+    .reduce((acc, hl) => ({ ...acc, [hl.tag]: (acc[hl.tag] ?? 0) + 1 }), {});
+  if (m.mode === 'team' && teamSweeps[m.team]) tags.sweep = teamSweeps[m.team];
+  return {
+    matchId: m.id,
+    at: m.ended_at,
+    mode: m.mode,
+    playerCount: m.player_count,
+    decks: m.decks,
+    outcome,
+    totals: parse(m.final_scores),
+    seat: m.seat,
+    team: m.team,
+    ratingDelta: m.rating_delta,
+    leftEarly: Boolean(m.left_early),
+    hasReplay: handRows.length > 0,
+    players: players.map((p) => ({ seat: p.seat, name: p.display_name, team: p.team, isBot: Boolean(p.is_bot) })),
+    hands: handRows.map((h) => ({
+      handNo: h.hand_no + 1, mine: h.result.score[side], best: Math.max(...h.result.score), head: h.result.ranking[0] === m.seat,
+    })),
+    highlights: tags,
+  };
 }
 
 export class Stats {
@@ -53,6 +92,15 @@ export class Stats {
       recentHighlights: db.prepare(`SELECT h.match_id, hl.tag, hl.seats FROM highlights hl JOIN hands h ON h.id = hl.hand_id
                                     WHERE hl.tag NOT IN ('auto', 'sweep') AND h.match_id IN
                                       (SELECT match_id FROM match_players WHERE user_id = ? ORDER BY match_id DESC LIMIT ?)`),
+      matchesCount: db.prepare('SELECT COUNT(*) AS n FROM match_players WHERE user_id = ?'),
+      matchesPageAll: db.prepare(`SELECT m.*, mp.seat, mp.team, mp.rating_before, mp.rating_delta, mp.left_early
+                                  FROM match_players mp JOIN matches m ON m.id = mp.match_id
+                                  WHERE mp.user_id = ? ORDER BY m.id DESC LIMIT ?`),
+      matchesPageBefore: db.prepare(`SELECT m.*, mp.seat, mp.team, mp.rating_before, mp.rating_delta, mp.left_early
+                                     FROM match_players mp JOIN matches m ON m.id = mp.match_id
+                                     WHERE mp.user_id = ? AND m.id < ? ORDER BY m.id DESC LIMIT ?`),
+      matchHighlights: db.prepare(`SELECT hl.tag, hl.seats FROM highlights hl JOIN hands h ON h.id = hl.hand_id
+                                   WHERE h.match_id = ? AND hl.tag NOT IN ('auto', 'sweep')`),
     };
   }
 
@@ -120,8 +168,7 @@ export class Stats {
     const rows = matches.map((m) => {
       const players = (playersByMatch.get(m.id) ?? []).sort((a, b) => a.seat - b.seat);
       const handRows = (handsByMatch.get(m.id) ?? []).sort((a, b) => a.hand_no - b.hand_no).map((h) => ({ ...h, result: parse(h.result) }));
-      const teamSweeps = [0, 0];
-      for (const h of handRows) if (h.result.sweep && h.result.winner !== null) teamSweeps[h.result.winner] += 1;
+      const teamSweeps = sweepsByTeam(handRows);
       const me = players.find((p) => p.seat === m.seat);
       const outcome = outcomeFor(m, players, m.seat, teamSweeps);
       if (outcome === 'win') wins += 1;
@@ -167,32 +214,9 @@ export class Stats {
       .filter((m) => m.rating_before !== null && m.rating_delta !== null)
       .map((m) => ({ matchId: m.id, at: m.ended_at, before: m.rating_before, after: m.rating_before + m.rating_delta }));
 
-    const recent = rows.slice(0, RECENT_MATCHES).map(({ m, players, handRows, teamSweeps, outcome }) => {
-      const side = m.mode === 'team' ? m.team : m.seat;
-      const tags = (tagsByMatch.get(m.id) ?? [])
-        .filter((hl) => parse(hl.seats).includes(m.seat))
-        .reduce((acc, hl) => ({ ...acc, [hl.tag]: (acc[hl.tag] ?? 0) + 1 }), {});
-      if (m.mode === 'team' && teamSweeps[m.team]) tags.sweep = teamSweeps[m.team];
-      return {
-        matchId: m.id,
-        at: m.ended_at,
-        mode: m.mode,
-        playerCount: m.player_count,
-        decks: m.decks,
-        outcome,
-        totals: parse(m.final_scores),
-        seat: m.seat,
-        team: m.team,
-        ratingDelta: m.rating_delta,
-        leftEarly: Boolean(m.left_early),
-        hasReplay: handRows.length > 0,
-        players: players.map((p) => ({ seat: p.seat, name: p.display_name, team: p.team, isBot: Boolean(p.is_bot) })),
-        hands: handRows.map((h) => ({
-          handNo: h.hand_no + 1, mine: h.result.score[side], best: Math.max(...h.result.score), head: h.result.ranking[0] === m.seat,
-        })),
-        highlights: tags,
-      };
-    });
+    const recent = rows.slice(0, RECENT_MATCHES).map(({ m, players, handRows, teamSweeps, outcome }) => (
+      buildMatchRow(m, players, handRows, teamSweeps, outcome, tagsByMatch.get(m.id) ?? [])
+    ));
 
     return {
       account: publicAccount(user),
@@ -217,6 +241,40 @@ export class Stats {
       opponents: everyone.filter((p) => p.against).sort((a, b) => b.against - a.against).slice(0, 5).map(strip),
       recent,
     };
+  }
+
+  // Full match history, newest first, paginated by match id cursor (`before`, exclusive) with an
+  // optional outcome filter. Scans in batches since outcome is derived, not stored.
+  matches(username, { before = null, outcome = null } = {}) {
+    const user = typeof username === 'string' ? this.q.userByName.get(username) : null;
+    if (!user) throw new HttpError(404, 'no_user');
+    const total = this.q.matchesCount.get(user.id).n;
+
+    const result = [];
+    let cursor = before;
+    let exhausted = false;
+    while (result.length <= MATCHES_PAGE_SIZE && !exhausted) {
+      const batch = cursor === null
+        ? this.q.matchesPageAll.all(user.id, MATCHES_BATCH)
+        : this.q.matchesPageBefore.all(user.id, cursor, MATCHES_BATCH);
+      if (batch.length === 0) break;
+      if (batch.length < MATCHES_BATCH) exhausted = true;
+      cursor = batch[batch.length - 1].id;
+      for (const m of batch) {
+        const players = this.q.players.all(m.id);
+        const handRows = this.q.hands.all(m.id).map((h) => ({ ...h, result: parse(h.result) }));
+        const teamSweeps = sweepsByTeam(handRows);
+        const matchOutcome = outcomeFor(m, players, m.seat, teamSweeps);
+        if (outcome && matchOutcome !== outcome) continue;
+        result.push(buildMatchRow(m, players, handRows, teamSweeps, matchOutcome, this.q.matchHighlights.all(m.id)));
+        if (result.length > MATCHES_PAGE_SIZE) break;
+      }
+    }
+
+    // The cursor for the next page is the id of the last match on THIS page (queries use `id < cursor`),
+    // not the id of the extra lookahead match itself, which must still be included on the next page.
+    const nextBefore = result.length > MATCHES_PAGE_SIZE ? result[MATCHES_PAGE_SIZE - 1].matchId : null;
+    return { matches: result.slice(0, MATCHES_PAGE_SIZE), nextBefore, total };
   }
 }
 

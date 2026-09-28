@@ -59,3 +59,18 @@ export const parseToken = (value) => {
   if (typeof value !== 'string' || !/^[a-f0-9]{48}$/.test(value)) throw new HttpError(401, 'bad_token');
   return value;
 };
+
+// Match-history pagination cursor: the id of the last match seen, or absent/null for the first page.
+export function parseBeforeId(value) {
+  if (value === undefined || value === null) return null;
+  if (!Number.isInteger(value) || value <= 0) throw new HttpError(400, 'bad_before');
+  return value;
+}
+
+export const MATCH_OUTCOMES = ['win', 'loss', 'draw'];
+
+export function parseOutcomeFilter(value) {
+  if (value === undefined || value === null) return null;
+  if (!MATCH_OUTCOMES.includes(value)) throw new HttpError(400, 'bad_outcome');
+  return value;
+}

@@ -47,7 +47,16 @@ async function load() {
     $('status').textContent = '这一轮没有回放记录（回放功能上线前打的对局，或记录不完整）。';
     return;
   }
-  selectHand(0);
+  selectHand(startingHandIndex(payload.hands));
+}
+
+// ?hand=n links to a specific hand (n as shown in the profile page's hand chips, 1-indexed);
+// invalid or missing values just start at the first hand.
+function startingHandIndex(hands) {
+  const n = Number(new URL(location.href).searchParams.get('hand'));
+  if (!Number.isInteger(n) || n < 1) return 0;
+  const idx = hands.findIndex((h) => h.handNo === n - 1);
+  return idx >= 0 ? idx : 0;
 }
 
 // Re-run a stored hand with the engine, keeping a snapshot of what the table shows after each step.

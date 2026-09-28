@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Hub } from './hub.js';
 import { HttpError, sendJson, sendError, readJson } from './http.js';
-import { parseCards, parseCard, parseName, parseCode, parseDecks, parseToken, parseTurnSeconds, parseDealMode } from './validate.js';
+import {
+  parseCards, parseCard, parseName, parseCode, parseDecks, parseToken, parseTurnSeconds, parseDealMode, parseBeforeId, parseOutcomeFilter,
+} from './validate.js';
 import { publicAccount } from './accounts.js';
 import { RateLimiter } from './limiter.js';
 import { Stats } from './stats.js';
@@ -130,6 +132,15 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
       if (!me) throw new HttpError(401, 'login_required');
       const name = body.username === undefined || body.username === 'me' ? me.username : String(body.username);
       return stats.profile(name);
+    },
+    // Full (paginated) match history for the profile page's 历史对局 section.
+    '/api/users/matches': (body, ip) => {
+      requireAccounts();
+      limits.reads.hit(ip);
+      const me = userFor(body);
+      if (!me) throw new HttpError(401, 'login_required');
+      const name = body.username === undefined || body.username === 'me' ? me.username : String(body.username);
+      return stats.matches(name, { before: parseBeforeId(body.before), outcome: parseOutcomeFilter(body.outcome) });
     },
     '/api/admin/users': (body) => {
       requireAdmin(body);

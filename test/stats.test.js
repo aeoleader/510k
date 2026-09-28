@@ -74,3 +74,55 @@ test('replays carry who showed the black 3; older hands without it load as null'
   const replay = stats.replay(id);
   assert.deepEqual(replay.hands.map((h) => h.tribute.claimedBy), [null, 2]);
 });
+
+test('matches(): unknown user throws no_user', async () => {
+  const { stats } = await setup();
+  assert.throws(() => stats.matches('Nobody'), (err) => err.status === 404 && err.code === 'no_user');
+});
+
+test('matches(): pagination is 20 per page, newest first, with a cursor for the next page', async () => {
+  const { accounts, stats, me, mate } = await setup();
+  for (let i = 0; i < 21; i++) record(accounts, me, mate, { totals: [i + 1, 0] });
+  const page1 = stats.matches('Me1');
+  assert.equal(page1.total, 21);
+  assert.equal(page1.matches.length, 20);
+  assert.ok(page1.nextBefore, 'a next-page cursor is returned when more matches remain');
+  // Newest first: the 21st recorded match (highest total) comes first.
+  assert.equal(page1.matches[0].totals[0], 21);
+  assert.equal(page1.matches[19].totals[0], 2);
+  const page2 = stats.matches('Me1', { before: page1.nextBefore });
+  assert.equal(page2.matches.length, 1);
+  assert.equal(page2.matches[0].totals[0], 1);
+  assert.equal(page2.nextBefore, null);
+});
+
+test('matches(): an exact multiple of the page size has no next page', async () => {
+  const { accounts, stats, me, mate } = await setup();
+  for (let i = 0; i < 20; i++) record(accounts, me, mate, { totals: [1, 0] });
+  const page1 = stats.matches('Me1');
+  assert.equal(page1.matches.length, 20);
+  assert.equal(page1.nextBefore, null);
+});
+
+test('matches(): outcome filter only returns matching matches, scanning past non-matches', async () => {
+  const { accounts, stats, me, mate } = await setup();
+  record(accounts, me, mate, { totals: [300, 100] }); // win
+  record(accounts, me, mate, { totals: [100, 300], leftEarly: true }); // loss
+  record(accounts, me, mate, { totals: [100, 100] }); // draw
+  record(accounts, me, mate, { totals: [300, 100] }); // win
+  const wins = stats.matches('Me1', { outcome: 'win' });
+  assert.equal(wins.matches.length, 2);
+  assert.ok(wins.matches.every((m) => m.outcome === 'win'));
+  assert.equal(wins.total, 4, 'total counts all matches, unaffected by the filter');
+  const losses = stats.matches('Me1', { outcome: 'loss' });
+  assert.equal(losses.matches.length, 1);
+  assert.equal(losses.matches[0].outcome, 'loss');
+});
+
+test('matches(): rows match the shape of profile().recent (shared row builder)', async () => {
+  const { accounts, stats, me, mate } = await setup();
+  record(accounts, me, mate, { totals: [200, 100], hands: [hand(0, { sweep: true, winner: 0 })] });
+  const p = stats.profile('Me1');
+  const m = stats.matches('Me1');
+  assert.deepEqual(m.matches[0], p.recent[0]);
+});
