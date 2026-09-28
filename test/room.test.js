@@ -154,3 +154,23 @@ test('the host picks the time per turn in the lobby; it drives the turn deadline
   if (!room.isAutomatic(room.hand.turn)) assert.equal(room.deadlineSpan, 30000);
   room.destroy();
 });
+
+test('the host swaps seats in the lobby to change teams', () => {
+  const { room } = makeRoom();
+  const a = room.addHuman('甲');
+  const b = room.addHuman('乙');
+  const c = room.addHuman('丙');
+  const d = room.addHuman('丁');
+  const teamOf = (p) => room.players.indexOf(p) % 2;
+  assert.deepEqual([a, b, c, d].map(teamOf), [0, 1, 0, 1]);
+  assert.equal(code(() => room.swapSeats(b.id, a.id, b.id)), 'host_only');
+  room.swapSeats(a.id, b.id, c.id);
+  assert.deepEqual(room.players.map((p) => p.name), ['甲', '丙', '乙', '丁']);
+  assert.equal(teamOf(b), teamOf(a), '乙 is now on 甲\'s team');
+  assert.equal(code(() => room.swapSeats(a.id, a.id, 'nobody')), 'no_player');
+  room.addBot(a.id);
+  room.addBot(a.id);
+  room.start(a.id);
+  assert.equal(code(() => room.swapSeats(a.id, b.id, c.id)), 'in_progress');
+  room.destroy();
+});

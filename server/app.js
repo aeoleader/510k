@@ -160,6 +160,7 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
     '/api/rooms/add-bot': ({ room, player }) => { room.addBot(player.id); },
     '/api/rooms/remove-player': ({ room, player, body }) => hub.kick(room, player.id, String(body.playerId ?? '')),
     '/api/rooms/set-decks': ({ room, player, body }) => room.setDecks(player.id, parseDecks(body.decks)),
+    '/api/rooms/swap-seats': ({ room, player, body }) => room.swapSeats(player.id, String(body.a ?? ''), String(body.b ?? '')),
     '/api/rooms/set-turn-time': ({ room, player, body }) => room.setTurnSeconds(player.id, parseTurnSeconds(body.seconds)),
     '/api/rooms/start': ({ room, player }) => room.start(player.id),
     '/api/rooms/play': ({ room, player, body }) => room.play(player.id, parseCards(body.cards)),

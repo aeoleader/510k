@@ -117,6 +117,18 @@ export class Room {
     this.hostId = (candidates.find((p) => this.online.has(p.id)) ?? candidates[0])?.id ?? null;
   }
 
+  // Seat order decides teams (alternating seats), so the host adjusts teams by swapping seats.
+  swapSeats(byId, aId, bId) {
+    this.requireHost(byId);
+    this.requirePhase('lobby', 'in_progress');
+    const a = this.players.findIndex((p) => p.id === aId);
+    const b = this.players.findIndex((p) => p.id === bId);
+    if (a < 0 || b < 0) throw new HttpError(404, 'no_player');
+    if (a === b) return;
+    [this.players[a], this.players[b]] = [this.players[b], this.players[a]];
+    this.changed();
+  }
+
   findByUser(userId) {
     return this.players.find((p) => p.userId !== null && p.userId === userId) ?? null;
   }

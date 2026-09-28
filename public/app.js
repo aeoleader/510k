@@ -47,6 +47,7 @@ const state = {
   entryMode: readPref('entryMode', 'guest'),
   invite: null, // room code from an invite link we have not joined yet
   focusCard: null, // last card the player tapped to select; quick picks show plays using it
+  swapPick: null, // host's first pick when swapping two seats in the lobby
   picks: [],
   fxSeen: new Set(), // play / trick / head ids already animated
   fxPrimed: false, // false until the first table render, so a reload does not replay old plays
@@ -327,6 +328,7 @@ function renderConnection() {
 
 function renderLobby(v) {
   const isHost = v.you?.isHost;
+  if (!isHost || !v.players.some((p) => p.id === state.swapPick)) state.swapPick = null;
   const count = v.players.length;
   const teams = count % 2 === 0 && count >= 4;
   const slots = [];
@@ -343,8 +345,11 @@ function renderLobby(v) {
       p.isBot ? '机器人' : null,
       !p.isBot && !p.online ? '离线' : null,
     ].filter(Boolean).join('，');
+    const swappable = isHost && count > 1;
+    const picked = state.swapPick === p.id;
     slots.push(`
-      <div class="seat-slot">
+      <div class="seat-slot ${teams ? 'teamed' : ''} ${swappable ? 'swappable' : ''} ${picked ? 'picked' : ''}" style="${team}"
+        ${swappable ? `data-swap="${p.id}" role="button" tabindex="0" aria-pressed="${picked}" aria-label="${esc(p.name)}，点击后再点另一位交换座位"` : ''}>
         <div class="who"><span class="avatar ${p.isBot ? 'bot' : ''}" style="${team}">${esc(initial(p.name))}</span><span class="name">${esc(p.name.replace(/\(机器人\)$/, ''))}</span></div>
         <div class="meta">${i + 1} 号位${teams ? `，${i % 2 === 0 ? '蓝队' : '红队'}` : ''}${tags ? `，${tags}` : ''}</div>
         ${p.account ? `<div>${badgeHtml(p.account, { compact: true })}</div>` : ''}
@@ -374,6 +379,7 @@ function renderLobby(v) {
       <button id="copyLinkBtn" type="button" class="btn btn-primary btn-sm">复制邀请链接</button>
     </div>
     <div class="seat-grid">${slots.join('')}</div>
+    ${isHost && count > 1 ? `<p class="swap-hint">${state.swapPick ? '再点另一位玩家，和他交换座位' : `点两位玩家交换座位${teams ? '，换座就是换队' : ''}`}</p>` : ''}
     <div class="lobby-controls">
       <label class="decks">副数
         <select id="decksSelect" ${isHost ? '' : 'disabled'}>${deckOptions}</select>
@@ -763,7 +769,26 @@ setInterval(tick, 200);
 
 // ---- events ---------------------------------------------------------------------------
 
+// Host swaps two lobby seats: first tap picks, second tap swaps, tapping the same seat cancels.
+function onSwapSlot(slot) {
+  const id = slot.dataset.swap;
+  if (!state.swapPick || state.swapPick === id) {
+    state.swapPick = state.swapPick === id ? null : id;
+    render();
+    return;
+  }
+  const first = state.swapPick;
+  state.swapPick = null;
+  run(() => api('/api/rooms/swap-seats', { a: first, b: id }));
+  render();
+}
+
 document.addEventListener('click', (e) => {
+  const slot = e.target.closest('[data-swap]');
+  if (slot && !e.target.closest('button')) {
+    onSwapSlot(slot);
+    return;
+  }
   const target = e.target.closest('button');
   if (!target) return;
   const cardId = target.dataset.card;
@@ -865,6 +890,12 @@ document.addEventListener('change', (e) => {
 
 $('codeInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('joinBtn').click(); });
 document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  if (e.target.dataset?.swap) {
+    e.preventDefault();
+    onSwapSlot(e.target);
+    return;
+  }
   if (e.key !== 'Enter') return;
   if (e.target.id === 'nameInput') $(state.invite ? 'joinBtn' : 'createBtn').click();
   if (e.target.id === 'passwordInput') $('loginBtn')?.click();
