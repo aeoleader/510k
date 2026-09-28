@@ -38,6 +38,16 @@ test('specials follow normals, weakest first', () => {
   assert.deepEqual(types.slice(firstSpecial), ['x510k', 'p510k', 'bomb', 'joker_bomb']);
 });
 
+test('specials: joker bombs always come after all normal bombs', () => {
+  const hand = ['4S0', '4H0', '4C0', '4D0', '4S1', '4H1', '4C1', 'LJ0', 'BJ0'];
+  const list = hints(hand, identify(['3S0', '3H0', '3C0', '3D0']));
+  const types = list.map((h) => h.combo.type);
+  assert.deepEqual(types[types.length - 1], 'joker_bomb');
+  const sevenBombIndex = list.findIndex((h) => h.combo.type === 'bomb' && h.combo.length === 7);
+  assert.ok(sevenBombIndex >= 0, 'the 7-card 4-bomb is a candidate');
+  assert.ok(sevenBombIndex < types.length - 1, '7-bomb comes before the joker bomb');
+});
+
 test('nothing beats -> empty list', () => {
   assert.deepEqual(hints(['3S0', '4S0'], identify(['LJ0', 'BJ0', 'BJ1'])), []);
 });

@@ -141,7 +141,10 @@ export function hints(hand, top = null) {
     || a.cost[2] - b.cost[2]
     || a.combo.value - b.combo.value
     || b.combo.length - a.combo.length);
-  const special = toCandidates(specials(groups, jokers)).sort((a, b) => compareStrength(a.combo, b.combo));
+  // Specials order: 杂510K, 纯510K, bombs (weakest first), then joker bombs last.
+  const isJokerBomb = (h) => h.combo.type === 'joker_bomb' ? 1 : 0;
+  const special = toCandidates(specials(groups, jokers)).sort((a, b) =>
+    isJokerBomb(a) - isJokerBomb(b) || compareStrength(a.combo, b.combo));
   return [...normals, ...special].map(({ cards, combo }) => ({ cards, combo }));
 }
 
