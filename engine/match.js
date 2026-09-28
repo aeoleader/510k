@@ -49,6 +49,16 @@ export function prepareHand(match) {
 
 // returns: [{ from, to, card }] — one per pending return.
 export function completeReturns(prepared, returns) {
+  const key = ({ from, to }) => `${from}->${to}`;
+  const expected = new Set(prepared.pendingReturns.map(key));
+  const seen = new Set();
+  for (const r of returns) {
+    const k = key(r);
+    if (!expected.has(k) || seen.has(k)) throw new Error('bad_returns');
+    seen.add(k);
+  }
+  if (seen.size !== expected.size) throw new Error('bad_returns');
+
   let hands = prepared.hands;
   for (const r of returns) hands = applyReturn({ hands, ...r });
   return hands;

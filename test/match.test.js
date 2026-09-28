@@ -30,10 +30,34 @@ test('second hand: previous head leads and tribute is applied, then returned', (
   const p = prepareHand(m);
   assert.equal(p.leader, 0);
   assert.deepEqual(p.tribute.pairs, [{ from: 3, to: 0 }, { from: 1, to: 2 }]);
-  if (p.tribute.resisted) return;
+  assert.equal(p.tribute.resisted, false);
   assert.equal(p.hands[0].length, 28);
   assert.equal(p.hands[3].length, 26);
   assert.deepEqual(p.pendingReturns, [{ from: 0, to: 3 }, { from: 2, to: 1 }]);
+  const hands = completeReturns(p, [
+    { from: 0, to: 3, card: p.hands[0][0] },
+    { from: 2, to: 1, card: p.hands[2][0] },
+  ]);
+  assert.deepEqual(hands.map((h) => h.length), [27, 27, 27, 27]);
+});
+
+test('completeReturns throws on duplicate, missing or extra returns', () => {
+  let m = createMatch({ playerCount: 4, decks: 2, seed: 1 });
+  ({ match: m } = recordHand(m, { ranking: [0, 2, 1, 3], finished: [0, 2], captured: [0, 100, 0, 100] }));
+  const p = prepareHand(m);
+  assert.equal(p.tribute.resisted, false);
+  assert.deepEqual(p.pendingReturns, [{ from: 0, to: 3 }, { from: 2, to: 1 }]);
+
+  // duplicate pair (two returns from seat 0 to seat 3)
+  assert.throws(() => completeReturns(p, [
+    { from: 0, to: 3, card: p.hands[0][0] },
+    { from: 0, to: 3, card: p.hands[0][1] },
+  ]), /bad_returns/);
+
+  // empty list when pendingReturns is non-empty
+  assert.throws(() => completeReturns(p, []), /bad_returns/);
+
+  // a valid list still works
   const hands = completeReturns(p, [
     { from: 0, to: 3, card: p.hands[0][0] },
     { from: 2, to: 1, card: p.hands[2][0] },
