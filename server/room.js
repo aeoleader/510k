@@ -5,6 +5,7 @@ import { createMatch, prepareHand, completeReturns, recordHand, isMatchOver, HAN
 import { botAction } from '../engine/bot.js';
 import { computeRatingDeltas } from '../engine/rating.js';
 import { findHighlights } from '../engine/highlights.js';
+import { counterView } from '../engine/counter.js';
 import { smallestSingle } from '../engine/hint.js';
 import { lowestCard } from '../engine/tribute.js';
 import { HttpError } from './http.js';
@@ -22,7 +23,7 @@ export class Room {
   // accountView(userId) -> public account or null; onMatchOver(room) persists a finished match.
   constructor({
     code, delays = DEFAULT_DELAYS, timers = globalThis, now = Date.now, onChange = () => {},
-    accountView = () => null, onMatchOver = () => {},
+    accountView = () => null, onMatchOver = () => {}, counterFor = () => false,
   }) {
     this.code = code;
     this.delays = delays;
@@ -30,6 +31,8 @@ export class Room {
     this.now = now;
     this.onChange = onChange;
     this.accountView = accountView;
+    this.counterFor = counterFor; // userId -> whether an admin enabled the card counter for them
+    this.playedCards = []; // every card played this hand, for card counters
     this.onMatchOver = onMatchOver;
     this.startedAt = null;
     this.ratingResult = null;
@@ -263,6 +266,7 @@ export class Room {
     };
     this.actions = [];
     this.events = [];
+    this.playedCards = [];
     this.phase = 'playing';
     this.schedule();
     this.changed();
@@ -314,6 +318,7 @@ export class Room {
     // `seq` (per hand) lets clients tell a new play or trick from one they have already animated.
     const id = `${this.match.handNo}:${e.seq}`;
     if (e.type === 'play') {
+      this.playedCards.push(...e.cards);
       this.seatActions[e.seat] = { id, cards: e.cards, type: e.combo.type, level: e.combo.level, auto: e.auto };
     } else if (e.type === 'pass') this.seatActions[e.seat] = { id, pass: true, auto: e.auto };
     else if (e.type === 'trick') {
@@ -558,6 +563,10 @@ export class Room {
         account: this.players[seat].userId ? this.accountView(this.players[seat].userId) : null,
         hand: inHand ? handCards(seat) : [],
         mustReturnTo: myReturn ? myReturn.to : null,
+        // Only the viewer's own view ever carries counter data, and only if an admin enabled it.
+        counter: this.phase === 'playing' && this.players[seat].userId && this.counterFor(this.players[seat].userId)
+          ? counterView({ decks: this.match.decks, ownHand: this.hand.hands[seat], played: this.playedCards })
+          : null,
       },
     };
   }

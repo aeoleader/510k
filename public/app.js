@@ -38,6 +38,7 @@ const state = {
   entryMode: readPref('entryMode', 'guest'),
   fxSeen: new Set(), // play / trick / head ids already animated
   fxPrimed: false, // false until the first table render, so a reload does not replay old plays
+  counterOpen: readPref('counterOpen', window.innerWidth >= 820 ? '1' : '0') === '1',
 };
 
 const BIG_TRICK_POINTS = 30;
@@ -450,6 +451,27 @@ function renderTable(v) {
 
   renderHand(v);
   renderActions(v);
+  renderCounter(v);
+}
+
+const COUNTER_RANKS = ['2', 'A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3'];
+
+// Only present in this player's own view, and only when an admin enabled it for their account.
+function renderCounter(v) {
+  const panel = $('counterPanel');
+  const c = v.you?.counter;
+  panel.hidden = !c;
+  if (!c) return;
+  const cell = (label, n) => `<span class="cc ${n ? '' : 'gone'}"><b>${label}</b><i>${n}</i></span>`;
+  panel.classList.toggle('open', state.counterOpen);
+  panel.innerHTML = `
+    <button type="button" id="counterToggle" class="counter-head" aria-expanded="${state.counterOpen}">
+      记牌器<span>余 ${c.points} 分</span>
+    </button>
+    <div class="counter-body">
+      <div class="cc-grid">${cell('大王', c.remaining.B)}${cell('小王', c.remaining.L)}${COUNTER_RANKS.map((r) => cell(r === 'T' ? '10' : r, c.remaining[r])).join('')}</div>
+      <div class="cc-points"><span>5 还有 <b>${c.fives}</b></span><span>10 还有 <b>${c.tens}</b></span><span>K 还有 <b>${c.kings}</b></span></div>
+    </div>`;
 }
 
 const GROUP_GAP = 12; // extra space before each 510K group, px
@@ -693,6 +715,11 @@ document.addEventListener('click', (e) => {
     case 'nextBtn': run(() => api('/api/rooms/next')); break;
     case 'restartBtn': run(() => api('/api/rooms/restart')); break;
     case 'clearBtn': state.selected.clear(); render(); break;
+    case 'counterToggle':
+      state.counterOpen = !state.counterOpen;
+      writePref('counterOpen', state.counterOpen ? '1' : '0');
+      render();
+      break;
     case 'sortBtn':
       state.sortMode = state.sortMode === '510k' ? 'size' : '510k';
       writePref('sortMode', state.sortMode);

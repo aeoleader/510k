@@ -53,15 +53,20 @@ function roomPayload(room, player) {
 }
 
 // accounts: an Accounts instance, or null to run guest-only (no login, no ratings).
-export function createApp({ publicDir, engineDir, delays, timers, now, accounts = null } = {}) {
+// admins: usernames (any case) allowed into /admin.
+// rateLimits: optional { login, register, rooms } overrides of { limit, windowMs } (tests use looser limits).
+export function createApp({ publicDir, engineDir, delays, timers, now, accounts = null, admins = [], rateLimits = {} } = {}) {
+  const adminNames = new Set(admins.map((a) => a.toLowerCase()));
   const hub = new Hub({ delays, timers, now, accounts });
   const stats = accounts ? new Stats(accounts.db) : null;
   // Password guessing and room spam are bounded per client IP (and per username for logins).
-  const limits = {
-    login: new RateLimiter({ limit: 10, windowMs: 60_000, now }),
-    register: new RateLimiter({ limit: 5, windowMs: 10 * 60_000, now }),
-    rooms: new RateLimiter({ limit: 30, windowMs: 10 * 60_000, now }),
+  const limitSpec = {
+    login: { limit: 10, windowMs: 60_000 },
+    register: { limit: 5, windowMs: 10 * 60_000 },
+    rooms: { limit: 30, windowMs: 10 * 60_000 },
+    ...rateLimits,
   };
+  const limits = Object.fromEntries(Object.entries(limitSpec).map(([k, spec]) => [k, new RateLimiter({ ...spec, now })]));
   const publicRoot = path.resolve(publicDir);
   const engineRoot = path.resolve(engineDir);
 
@@ -72,6 +77,13 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
   };
   const userFor = (body) => (accounts ? accounts.userForToken(body.accountToken) : null);
   const displayName = (body, user) => (user ? user.username : parseName(body.name));
+  const requireAdmin = (body) => {
+    requireAccounts();
+    const user = userFor(body);
+    if (!user) throw new HttpError(401, 'login_required');
+    if (!adminNames.has(user.username.toLowerCase())) throw new HttpError(403, 'admin_only');
+    return user;
+  };
 
   const open = {
     '/api/auth/register': async (body, ip) => {
@@ -88,7 +100,7 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
     '/api/auth/me': (body) => {
       const user = requireAccounts().userForToken(body.accountToken);
       if (!user) throw new HttpError(401, 'session_expired');
-      return { account: publicAccount(user) };
+      return { account: publicAccount(user), isAdmin: adminNames.has(user.username.toLowerCase()) };
     },
     '/api/auth/logout': (body) => {
       requireAccounts().logout(body.accountToken);
@@ -106,6 +118,16 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
       if (!me) throw new HttpError(401, 'login_required');
       const name = body.username === undefined || body.username === 'me' ? me.username : String(body.username);
       return stats.profile(name);
+    },
+    '/api/admin/users': (body) => {
+      requireAdmin(body);
+      return { users: accounts.searchUsers(body.query), audit: accounts.auditLog() };
+    },
+    '/api/admin/card-counter': (body) => {
+      const admin = requireAdmin(body);
+      const user = accounts.setCardCounter(admin, body.username, Boolean(body.enabled));
+      hub.refreshUser(user.id);
+      return { username: user.username, cardCounter: Boolean(user.card_counter) };
     },
     '/api/rooms/create': (body, ip) => {
       limits.rooms.hit(ip);
@@ -164,6 +186,7 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
       // Pretty URLs for shareable pages; the page script reads the id / name from the path.
       if (/^\/replay\/\d+$/.test(url.pathname)) return serveFile(res, publicRoot, '/replay.html');
       if (/^\/u\/[^/]+$/.test(url.pathname)) return serveFile(res, publicRoot, '/profile.html');
+      if (url.pathname === '/admin') return serveFile(res, publicRoot, '/admin.html');
       const pathname = url.pathname === '/' ? '/index.html' : url.pathname;
       return serveFile(res, publicRoot, pathname);
     } catch (err) {

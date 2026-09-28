@@ -18,7 +18,10 @@ const streams = [];
 
 before(async () => {
   accounts = new Accounts(openDatabase(':memory:'));
-  ({ server } = createApp({ publicDir: path.join(root, 'public'), engineDir: path.join(root, 'engine'), delays: FAST, accounts }));
+  ({ server } = createApp({
+    publicDir: path.join(root, 'public'), engineDir: path.join(root, 'engine'), delays: FAST, accounts,
+    admins: ['Boss'], rateLimits: { register: { limit: 100, windowMs: 60_000 } },
+  }));
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -212,4 +215,38 @@ test('accounts: a full rated match updates the rating and records the match', as
   assert.equal((await fetch(`${base}/replay/${view.matchId}`)).status, 200);
   assert.equal((await fetch(`${base}/u/Rated`)).status, 200);
   await post('/api/rooms/leave', { code, token });
+});
+
+test('admin: only admins manage card counters, and counter data reaches only that player', async () => {
+  const boss = await post('/api/auth/register', { username: 'Boss', password: 'secret1' });
+  const counted = await post('/api/auth/register', { username: 'Counted', password: 'secret1' });
+  assert.equal((await post('/api/auth/me', { accountToken: boss.accountToken })).isAdmin, true);
+  assert.equal((await post('/api/admin/users', { accountToken: counted.accountToken, query: '' }, 403)).error, 'admin_only');
+  assert.equal((await post('/api/admin/users', { query: '' }, 401)).error, 'login_required');
+  const found = await post('/api/admin/users', { accountToken: boss.accountToken, query: 'count' });
+  assert.deepEqual(found.users.map((u) => [u.username, u.cardCounter]), [['Counted', false]]);
+  const set = await post('/api/admin/card-counter', { accountToken: boss.accountToken, username: 'Counted', enabled: true });
+  assert.equal(set.cardCounter, true);
+  const audit = (await post('/api/admin/users', { accountToken: boss.accountToken, query: '' })).audit;
+  assert.deepEqual([audit[0].admin, audit[0].target, audit[0].action], ['Boss', 'Counted', 'card_counter_on']);
+
+  const host = await post('/api/rooms/create', { accountToken: counted.accountToken });
+  const guest = await post('/api/rooms/join', { code: host.code, name: '路人' });
+  const hostView = await listen(host.code, host.token);
+  const guestView = await listen(guest.code, guest.token);
+  for (let i = 0; i < 2; i++) await post('/api/rooms/add-bot', { code: host.code, token: host.token });
+  await post('/api/rooms/start', { code: host.code, token: host.token });
+  await until(() => hostView.view?.phase === 'playing' && guestView.view?.phase === 'playing');
+  const counter = hostView.view.you.counter;
+  assert.ok(counter, 'the enabled player sees the counter');
+  const unseen = Object.values(counter.remaining).reduce((a, b) => a + b, 0);
+  const othersHold = hostView.view.players.filter((p) => p.seat !== hostView.view.you.seat).reduce((n, p) => n + p.cards, 0);
+  assert.equal(unseen, othersHold, 'unseen cards are exactly the cards still in other hands');
+  assert.equal(guestView.view.you.counter, null);
+  assert.ok(!JSON.stringify(guestView.view).includes('"remaining"'), 'no counter data in anyone else\'s view');
+
+  await post('/api/admin/card-counter', { accountToken: boss.accountToken, username: 'Counted', enabled: false });
+  await until(() => hostView.view.you.counter === null);
+  await post('/api/rooms/leave', { code: guest.code, token: guest.token });
+  await post('/api/rooms/leave', { code: host.code, token: host.token });
 });

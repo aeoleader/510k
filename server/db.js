@@ -76,6 +76,13 @@ const MIGRATIONS = [
    );
    CREATE INDEX highlights_hand ON highlights(hand_id);
    CREATE INDEX matches_ended ON matches(ended_at);`,
+  `CREATE TABLE admin_audit (
+     id INTEGER PRIMARY KEY,
+     admin_user_id INTEGER NOT NULL REFERENCES users(id),
+     target_user_id INTEGER NOT NULL REFERENCES users(id),
+     action TEXT NOT NULL,
+     at INTEGER NOT NULL
+   );`,
 ];
 
 export function openDatabase(file) {

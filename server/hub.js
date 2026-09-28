@@ -29,6 +29,20 @@ export class Hub {
     this.clients = new Map(); // code -> Map(playerId -> Set(res))
     this.streams = 0;
     this.accountCache = new Map(); // userId -> public account; ratings only change in recordMatch
+    this.counterCache = new Map(); // userId -> card counter enabled
+  }
+
+  counterFor(userId) {
+    if (!this.accounts) return false;
+    if (!this.counterCache.has(userId)) this.counterCache.set(userId, Boolean(this.accounts.getUser(userId)?.card_counter));
+    return this.counterCache.get(userId);
+  }
+
+  // After an admin change: drop cached account data and push fresh views to rooms the user sits in.
+  refreshUser(userId) {
+    this.accountCache.delete(userId);
+    this.counterCache.delete(userId);
+    for (const room of this.rooms.values()) if (room.findByUser(userId)) this.broadcast(room);
   }
 
   accountView(userId) {
@@ -52,6 +66,7 @@ export class Hub {
       onChange: (r) => this.broadcast(r),
       accountView: (userId) => this.accountView(userId),
       onMatchOver: (r) => this.recordMatch(r),
+      counterFor: (userId) => this.counterFor(userId),
     });
     room.creatorIp = ip;
     this.rooms.set(code, room);

@@ -64,6 +64,14 @@ export class Accounts {
       addRating: db.prepare('UPDATE users SET rating = rating + ? WHERE id = ?'),
       insertMatch: db.prepare(`INSERT INTO matches (room_code, player_count, decks, mode, started_at, ended_at, final_scores)
                                VALUES (?, ?, ?, ?, ?, ?, ?)`),
+      setCounter: db.prepare('UPDATE users SET card_counter = ? WHERE id = ?'),
+      audit: db.prepare('INSERT INTO admin_audit (admin_user_id, target_user_id, action, at) VALUES (?, ?, ?, ?)'),
+      auditLog: db.prepare(`SELECT a.action, a.at, admin.username AS admin, target.username AS target FROM admin_audit a
+                            JOIN users admin ON admin.id = a.admin_user_id JOIN users target ON target.id = a.target_user_id
+                            ORDER BY a.id DESC LIMIT ?`),
+      search: db.prepare(`SELECT u.id, u.username, u.rating, u.card_counter, u.created_at,
+                            (SELECT COUNT(*) FROM match_players mp WHERE mp.user_id = u.id) AS matches
+                          FROM users u WHERE u.username LIKE ? ESCAPE '\\' ORDER BY u.username LIMIT ?`),
       insertHand: db.prepare(`INSERT INTO hands (match_id, hand_no, seed, leader, initial_hands, tribute, result)
                                VALUES (?, ?, ?, ?, ?, ?, ?)`),
       insertAction: db.prepare(`INSERT INTO hand_events (hand_id, seq, seat, type, cards, combo_type, elapsed_ms, auto)
@@ -119,6 +127,30 @@ export class Accounts {
 
   getUser(id) {
     return this.q.byId.get(id) ?? null;
+  }
+
+  // ---- admin -----------------------------------------------------------------
+
+  searchUsers(query, limit = 50) {
+    const text = typeof query === 'string' ? query.trim().slice(0, 32) : '';
+    const pattern = `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    return this.q.search.all(pattern, limit).map((u) => ({
+      username: u.username, rating: u.rating, cardCounter: Boolean(u.card_counter), createdAt: u.created_at, matches: u.matches,
+    }));
+  }
+
+  setCardCounter(admin, username, enabled) {
+    const target = this.q.byName.get(String(username ?? ''));
+    if (!target) throw new HttpError(404, 'no_user');
+    transaction(this.db, () => {
+      this.q.setCounter.run(enabled ? 1 : 0, target.id);
+      this.q.audit.run(admin.id, target.id, enabled ? 'card_counter_on' : 'card_counter_off', this.now());
+    });
+    return this.getUser(target.id);
+  }
+
+  auditLog(limit = 50) {
+    return this.q.auditLog.all(limit);
   }
 
   // Persist one finished match (players, every hand for replays) and each rated player's new rating, atomically.
