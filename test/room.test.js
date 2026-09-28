@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Room } from '../server/room.js';
 import { HttpError } from '../server/http.js';
+import { botAction, botContext } from '../engine/bot.js';
 
 const FAST = { turnMs: 5, returnMs: 5, botMs: 1, nextHandMs: 1 };
 
@@ -99,16 +100,26 @@ for (const players of [4, 5, 8]) {
   });
 }
 
-test('an online human who never acts is timed out: pass when following, smallest single when leading', async () => {
+test('an online human who never acts is timed out onto the bot policy', async () => {
   const { room } = makeRoom({ ...FAST, turnMs: 20 });
   const human = room.addHuman('甲');
   room.setOnline(human.id, true);
   for (let i = 0; i < 3; i++) room.addBot(human.id);
+  const expected = [];
+  const autoPlay = room.autoPlay.bind(room);
+  room.autoPlay = (seat, timedOut) => {
+    if (seat === 0 && room.phase === 'playing' && room.hand.turn === 0) {
+      assert.equal(timedOut, true);
+      expected.push(botAction(botContext(room.hand, 0)));
+    }
+    autoPlay(seat, timedOut);
+  };
   room.start(human.id);
-  await waitFor(() => room.events.some((e) => e.seat === 0 && e.auto));
+  await waitFor(() => room.events.filter((e) => e.seat === 0 && e.auto).length >= 3);
   const mine = room.events.filter((e) => e.seat === 0 && (e.type === 'play' || e.type === 'pass'));
   assert.ok(mine.every((e) => e.auto));
-  assert.ok(mine.every((e) => e.type === 'pass' || e.cards.length === 1));
+  assert.deepEqual(mine.map((e) => (e.type === 'pass' ? { type: 'pass' } : { type: 'play', cards: e.cards })),
+    expected.slice(0, mine.length));
   room.destroy();
 });
 

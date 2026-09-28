@@ -2,11 +2,10 @@ import crypto from 'node:crypto';
 import { defaultDecks, sumPoints, MIN_PLAYERS, MAX_PLAYERS } from '../engine/cards.js';
 import { createHandState, apply, ranking, GameError } from '../engine/game.js';
 import { createMatch, prepareHand, completeReturns, recordHand, isMatchOver, HANDS_PER_MATCH } from '../engine/match.js';
-import { botAction } from '../engine/bot.js';
+import { botAction, botContext } from '../engine/bot.js';
 import { computeRatingDeltas } from '../engine/rating.js';
 import { findHighlights } from '../engine/highlights.js';
 import { counterView } from '../engine/counter.js';
-import { smallestSingle } from '../engine/hint.js';
 import { lowestCard } from '../engine/tribute.js';
 import { HttpError } from './http.js';
 
@@ -438,26 +437,10 @@ export class Room {
     this.afterReturn();
   }
 
-  autoPlay(seat, timedOut) {
+  // Bots, absent seats and timed-out turns all play the same policy (callers still say which).
+  autoPlay(seat) {
     if (this.phase !== 'playing' || this.hand.turn !== seat) return;
-    const hand = this.hand.hands[seat];
-    const trick = this.hand.trick;
-    let choice;
-    if (timedOut) {
-      choice = trick ? { type: 'pass' } : { type: 'play', cards: smallestSingle(hand) };
-    } else {
-      const teams = this.match.teams;
-      const side = (s) => (teams ? teams[s] : s);
-      const opponents = this.hand.hands.filter((h, i) => h.length && side(i) !== side(seat));
-      choice = botAction({
-        hand,
-        top: trick?.top ?? null,
-        decks: this.match.decks,
-        topIsTeammate: Boolean(teams && trick && trick.topSeat !== seat && side(trick.topSeat) === side(seat)),
-        trickPoints: trick ? sumPoints(trick.cards) : 0,
-        opponentMinCards: Math.min(...opponents.map((h) => h.length)),
-      });
-    }
+    const choice = botAction(botContext(this.hand, seat));
     // `auto` marks a human seat played by the server (timeout, offline, left); bots just play.
     this.act({ seat, ...choice, auto: !this.players[seat].isBot });
   }

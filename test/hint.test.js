@@ -77,7 +77,7 @@ test('smallestSingle', () => {
 });
 
 test('bot: leads the first hint, passes on teammate, saves specials for points', () => {
-  const hand = ['5S0', 'TS0', 'KS0', '4H0'];
+  const hand = ['5S0', 'TS0', 'KS0', '4H0', '6H0', '8C0', '9D0'];
   assert.equal(botAction({ hand, top: null }).type, 'play');
   assert.deepEqual(botAction({ hand, top: identify(['3D0']), topIsTeammate: true }), { type: 'pass' });
   assert.deepEqual(botAction({ hand, top: identify(['3D0']) }), { type: 'play', cards: ['4H0'] });
