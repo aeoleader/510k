@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Room } from '../server/room.js';
 import { HttpError } from '../server/http.js';
+import { createHandState } from '../engine/game.js';
 
 const FAST = { turnMs: 5, returnMs: 5, botMs: 1, nextHandMs: 1 };
 
@@ -172,5 +173,21 @@ test('the host swaps seats in the lobby to change teams', () => {
   room.addBot(a.id);
   room.start(a.id);
   assert.equal(code(() => room.swapSeats(a.id, b.id, c.id)), 'in_progress');
+  room.destroy();
+});
+
+test('played cards are recorded and shown in display order', () => {
+  const { room } = makeRoom({ ...FAST, botMs: 100000, turnMs: 100000 });
+  const players = ['甲', '乙', '丙', '丁'].map((n) => room.addHuman(n));
+  for (const p of players) room.setOnline(p.id, true);
+  room.start(players[0].id);
+  room.hand = createHandState({
+    hands: [['4S0', '7H0', '4D0', '7S0', '7C0', '9S0'], ['3S0'], ['3H0'], ['3D0']], teams: [0, 1, 0, 1], leader: 0, decks: 2,
+  });
+  room.play(players[0].id, ['4S0', '7H0', '4D0', '7S0', '7C0']);
+  const order = ['7C0', '7H0', '7S0', '4D0', '4S0'];
+  assert.deepEqual(room.seatActions[0].cards, order);
+  assert.deepEqual(room.viewFor(players[1].id).trick.cards, order);
+  assert.deepEqual(room.handRecord.actions[0].cards, order);
   room.destroy();
 });

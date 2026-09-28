@@ -8,6 +8,7 @@ import { findHighlights } from '../engine/highlights.js';
 import { counterView } from '../engine/counter.js';
 import { smallestSingle } from '../engine/hint.js';
 import { lowestCard } from '../engine/tribute.js';
+import { displayOrder } from '../engine/sort.js';
 import { HttpError } from './http.js';
 
 export const DEFAULT_DELAYS = { turnMs: 15000, returnMs: 15000, botMs: 700, nextHandMs: 6000 };
@@ -314,6 +315,8 @@ export class Room {
   // `auto` is only ever set here on the server (timeouts, bots, offline players).
   act(action) {
     this.requirePhase('playing', 'not_playing');
+    // Played cards are stored and shown organised (三带一对 as 777 44); the combo is the same either way.
+    if (action.type === 'play' && Array.isArray(action.cards)) action = { ...action, cards: displayOrder(action.cards) };
     let result;
     try {
       result = apply(this.hand, action);

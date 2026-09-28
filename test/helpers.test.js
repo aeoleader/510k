@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sortBySize, sortBy510k, bombValues } from '../engine/sort.js';
+import { sortBySize, sortBy510k, bombValues, displayOrder } from '../engine/sort.js';
 import { counterView } from '../engine/counter.js';
 import { findHighlights } from '../engine/highlights.js';
 import { createHandState, replay } from '../engine/game.js';
@@ -65,4 +65,15 @@ test('highlights: consecutive automatic actions by one seat are tagged once', ()
   ];
   const autos = findHighlights({ events, teams: [0, 1, 0, 1], decks: 2 }).filter((h) => h.tag === 'auto');
   assert.deepEqual(autos.map((h) => h.eventSeq), [0, 4]);
+});
+
+test('displayOrder: bigger groups first, then low to high', () => {
+  assert.deepEqual(displayOrder(['4S0', '7H0', '4D0', '7S0', '7C0']), ['7C0', '7H0', '7S0', '4D0', '4S0'], '三带一对 shows 777 then 44');
+  assert.deepEqual(displayOrder(['7S0', '3H0', '5D0', '4S0', '6C0']), ['3H0', '4S0', '5D0', '6C0', '7S0']);
+  assert.deepEqual(displayOrder(['KS0', '5H0', 'TD0']), ['5H0', 'TD0', 'KS0']);
+  assert.deepEqual(displayOrder(['6S0', '5S0', '6H0', '5H0', '7S0', '7H0']), ['5H0', '5S0', '6H0', '6S0', '7H0', '7S0']);
+  assert.deepEqual(displayOrder(['9D0', '9S0', '9H1', '9C0']), ['9D0', '9C0', '9H1', '9S0'], 'bomb stays one group');
+  const input = ['4S0', '7H0'];
+  displayOrder(input);
+  assert.deepEqual(input, ['4S0', '7H0'], 'input untouched');
 });

@@ -29,3 +29,11 @@ export function bombValues(hand) {
   for (const c of hand) if (!isJoker(c)) counts.set(valueOf(c), (counts.get(valueOf(c)) || 0) + 1);
   return new Set([...counts].filter(([, n]) => n >= 4).map(([v]) => v));
 }
+
+// How a played combo is laid out on the table: bigger groups first, then low to high,
+// e.g. 三带一对 as 777 44, a straight or 510K ascending.
+export function displayOrder(cards) {
+  const counts = new Map();
+  for (const c of cards) counts.set(valueOf(c), (counts.get(valueOf(c)) || 0) + 1);
+  return [...cards].sort((a, b) => counts.get(valueOf(b)) - counts.get(valueOf(a)) || compareCards(a, b));
+}
