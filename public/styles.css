@@ -33,6 +33,7 @@
   --shadow: 0 16px 40px rgba(2, 10, 8, 0.45);
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
   --topbar-h: 56px;
+  --app-h: 100dvh; /* the height the app lays out in; the viewport width when rotated */
 }
 
 * { box-sizing: border-box; }
@@ -42,7 +43,7 @@ html, body { height: 100%; }
 
 body {
   margin: 0;
-  min-height: 100dvh;
+  min-height: var(--app-h);
   display: grid;
   grid-template-rows: auto 1fr;
   background: radial-gradient(120% 80% at 50% 0%, var(--bg-2), var(--bg) 60%);
@@ -151,6 +152,8 @@ select { cursor: pointer; }
 .lobby-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .lobby-head h2 { margin: 0; font-size: 15px; font-weight: 500; color: var(--muted); }
 .lobby-code { font-size: 56px; font-weight: 800; letter-spacing: 12px; line-height: 1; color: var(--accent); }
+.head-actions { display: flex; gap: 8px; align-items: center; }
+.head-copy { display: none; }
 .invite-row {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 10px 12px; border-radius: var(--radius-panel); background: var(--panel); border: 1px solid var(--line);
@@ -197,7 +200,7 @@ button.room-code:hover { border-color: var(--accent); color: var(--text); }
 
 .game {
   display: grid; grid-template-rows: 1fr auto;
-  height: calc(100dvh - var(--topbar-h)); overflow: hidden;
+  height: calc(var(--app-h) - var(--topbar-h)); overflow: hidden;
 }
 
 .felt-wrap { position: relative; min-height: 0; overflow: hidden; }
@@ -358,9 +361,7 @@ button.room-code:hover { border-color: var(--accent); color: var(--text); }
 }
 .pick.special { border-color: rgba(255, 122, 61, 0.55); color: #ffc3a3; }
 .pick.on { background: rgba(240, 165, 58, 0.18); border-color: var(--accent); color: var(--text); }
-@media (max-height: 500px) and (orientation: landscape) {
-  .pick { min-height: 28px; padding: 0 10px; font-size: 12px; }
-}
+html.landscape .pick { min-height: 28px; padding: 0 10px; font-size: 12px; }
 .hand {
   --pull: 32px; /* how much each card tucks under the previous one; set by script to fit the width */
   display: grid; justify-content: center; align-content: end;
@@ -388,7 +389,7 @@ button.room-code:hover { border-color: var(--accent); color: var(--text); }
 .overlay.passive .dialog { pointer-events: auto; }
 @keyframes fade { from { opacity: 0; } }
 .dialog {
-  width: min(520px, 100%); max-height: 90dvh; overflow-y: auto;
+  width: min(520px, 100%); max-height: calc(var(--app-h) * 0.9); overflow-y: auto;
   display: grid; gap: 16px; padding: 22px;
   border-radius: var(--radius-panel); background: var(--panel); border: 1px solid var(--line-strong); box-shadow: var(--shadow);
 }
@@ -671,9 +672,10 @@ button.room-code:hover { border-color: var(--accent); color: var(--text); }
 .cc.gone { opacity: 0.35; }
 .cc-points { display: flex; justify-content: space-between; color: var(--muted); }
 .cc-points b { color: var(--text); }
-@media (max-width: 560px), (max-height: 500px) and (orientation: landscape) {
+@media (max-width: 560px) {
   .counter { top: 4px; right: 4px; width: 160px; }
 }
+html.landscape .counter { top: 4px; right: 4px; width: 160px; }
 
 /* ---- shared page chrome (replay, profile) ------------------------------------------------- */
 
@@ -907,31 +909,89 @@ a.wordmark { color: inherit; text-decoration: none; }
 }
 
 /* phones held sideways: give the height to the felt and the hand */
-@media (max-height: 500px) and (orientation: landscape) {
-  :root { --card-w: 42px; --topbar-h: 42px; }
-  .topbar { gap: 10px; }
-  .wordmark { font-size: 16px; }
-  .rules-link, .log-ticker, .backs, .seat .nameplate .tier-badge, .hand-progress { display: none; }
-  .felt { inset: 7% 12% 4%; }
-  .seat { width: 110px; gap: 2px; }
-  .seat .avatar { --size: 26px; font-size: 12px; }
-  .seat .ring::before { inset: -5px; }
-  .seat .nameplate { display: flex; gap: 6px; padding: 2px 8px; min-width: 0; max-width: 150px; }
-  .seat .name { font-size: 11px; max-width: 5em; }
-  .seat .stats { font-size: 11px; gap: 4px; white-space: nowrap; }
-  .seat .badge { top: -6px; right: -12px; font-size: 10px; padding: 0 5px; }
-  .card.md { --w: 30px; }
-  .card.sm { --w: 26px; }
-  .center-area { gap: 4px; }
-  .center-area .trick-label { font-size: 11px; }
-  .points-pill { padding: 2px 10px; font-size: 13px; }
-  .dock { padding-top: 0; padding-bottom: max(6px, env(safe-area-inset-bottom)); }
-  .action-bar { min-height: 38px; gap: 6px; }
-  .action-bar .btn { min-height: 34px; padding: 0 14px; }
-  .timer { width: 32px; height: 32px; font-size: 12px; }
-  .hand { padding-top: 16px; min-height: calc(var(--card-w) * 1.4 + 18px); }
-  .fx-stamp span { font-size: 26px; }
-  .fx-stamp-king span { font-size: 44px; }
+html.landscape { --card-w: 42px; --topbar-h: 42px; }
+html.landscape .topbar { gap: 10px; }
+html.landscape .wordmark { font-size: 16px; }
+html.landscape .rules-link, html.landscape .log-ticker, html.landscape .backs, html.landscape .seat .nameplate .tier-badge, html.landscape .hand-progress { display: none; }
+html.landscape .felt { inset: 7% 12% 4%; }
+html.landscape .seat { width: 110px; gap: 2px; }
+html.landscape .seat .avatar { --size: 26px; font-size: 12px; }
+html.landscape .seat .ring::before { inset: -5px; }
+html.landscape .seat .nameplate { display: flex; gap: 6px; padding: 2px 8px; min-width: 0; max-width: 150px; }
+html.landscape .seat .name { font-size: 11px; max-width: 5em; }
+html.landscape .seat .stats { font-size: 11px; gap: 4px; white-space: nowrap; }
+html.landscape .seat .badge { top: -6px; right: -12px; font-size: 10px; padding: 0 5px; }
+html.landscape .card.md { --w: 30px; }
+html.landscape .card.sm { --w: 26px; }
+html.landscape .center-area { gap: 4px; }
+html.landscape .center-area .trick-label { font-size: 11px; }
+html.landscape .points-pill { padding: 2px 10px; font-size: 13px; }
+html.landscape .dock { padding-top: 0; padding-bottom: max(6px, env(safe-area-inset-bottom)); }
+html.landscape .action-bar { min-height: 38px; gap: 6px; }
+html.landscape .action-bar .btn { min-height: 34px; padding: 0 14px; }
+html.landscape .timer { width: 32px; height: 32px; font-size: 12px; }
+html.landscape .hand { padding-top: 16px; min-height: calc(var(--card-w) * 1.4 + 18px); }
+html.landscape .fx-stamp span { font-size: 26px; }
+html.landscape .fx-stamp-king span { font-size: 44px; }
+
+/* landscape: actions and quick picks share one row above the hand */
+html.landscape .dock { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 8px; }
+html.landscape .action-bar { justify-content: flex-start; flex-wrap: nowrap; }
+html.landscape .action-bar .spacer { display: none; }
+html.landscape .quick-picks { justify-content: flex-start; margin: 0; padding: 0; }
+html.landscape .hand { grid-column: 1 / -1; }
+html.landscape .sort-btn .long { display: none; }
+
+/* landscape: entry, lobby and dialogs are compact enough to fit one screen without scrolling */
+html.landscape .entry { gap: 20px; padding: 10px 16px; align-items: center; min-height: 0; }
+html.landscape .entry-title { font-size: 44px; margin-bottom: 8px; }
+html.landscape .entry-lede { font-size: 13px; margin: 0; }
+html.landscape .entry-points { display: none; }
+html.landscape .entry-card { padding: 12px 14px; gap: 6px; }
+html.landscape .entry-card input { min-height: 36px; }
+html.landscape .entry-card .btn { min-height: 36px; }
+html.landscape .entry-card .btn-primary { margin-top: 0; min-height: 38px; }
+html.landscape .divider { margin: 2px 0 0; }
+html.landscape .hint { display: none; }
+html.landscape .invite-banner { padding: 6px 10px; font-size: 13px; }
+html.landscape .lobby { padding: 8px 16px; gap: 8px; width: 100%; }
+html.landscape .lobby-head { align-items: center; }
+html.landscape .lobby-head h2 { display: none; }
+html.landscape .lobby-code { font-size: 28px; letter-spacing: 6px; }
+html.landscape .invite-row { padding: 6px 10px; }
+html.landscape .invite-link { font-size: 12px; }
+html.landscape .seat-grid { grid-template-columns: repeat(4, 1fr); gap: 6px; }
+html.landscape .seat-slot { min-height: 0; padding: 6px 8px; gap: 2px; }
+html.landscape .seat-slot .avatar { --size: 26px; font-size: 12px; }
+html.landscape .seat-slot .meta { font-size: 11px; }
+html.landscape .seat-slot .tier-badge { display: none; }
+html.landscape .seat-slot .remove { top: 4px; right: 4px; min-height: 26px; padding: 0 8px; }
+html.landscape .lobby-controls { padding: 8px 10px; gap: 8px; }
+html.landscape .lobby-controls .decks select { min-height: 32px; }
+html.landscape .lobby-controls .spacer { display: none; }
+html.landscape .invite-row { display: none; }
+html.landscape .head-copy { display: inline-flex; }
+html.landscape .btn { min-height: 34px; }
+html.landscape .btn-sm { min-height: 28px; }
+html.landscape .overlay { padding: 8px; }
+html.landscape .overlay.passive { padding-top: 48px; }
+html.landscape .dialog { padding: 12px 14px; gap: 8px; }
+html.landscape .dialog h2 { font-size: 16px; }
+html.landscape .standings { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+html.landscape .standing { padding: 6px 10px; gap: 8px; }
+html.landscape .standing .total { font-size: 18px; }
+html.landscape .rating-change { padding: 6px 10px; }
+
+/* forced landscape on a phone held upright (iOS cannot lock orientation): rotate the whole app */
+html.rotated { --app-h: 100dvw; overflow: hidden; }
+html.rotated body {
+  position: fixed; top: 0; left: 0; overflow: hidden;
+  width: 100dvh; height: 100dvw; min-height: 0;
+  transform-origin: top left; transform: translateX(100dvw) rotate(90deg);
+}
+.rotate-btn { display: none; }
+@media (pointer: coarse) {
+  .rotate-btn { display: inline-flex; min-height: 30px; padding: 0 10px; font-size: 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

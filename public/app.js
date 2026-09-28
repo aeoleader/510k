@@ -21,6 +21,14 @@ const ERROR_TEXT = {
 const MAX_SEATS = 8;
 
 const $ = (id) => document.getElementById(id);
+const IS_TOUCH = window.matchMedia('(pointer: coarse)').matches;
+const LANDSCAPE_MAX_HEIGHT = 500; // phones held sideways; tablets keep the normal layout
+
+// The size the app lays out in: when the page is rotated into landscape, width and height swap.
+function viewport() {
+  const rotated = document.documentElement.classList.contains('rotated');
+  return rotated ? { w: window.innerHeight, h: window.innerWidth } : { w: window.innerWidth, h: window.innerHeight };
+}
 
 const state = {
   code: null,
@@ -43,6 +51,7 @@ const state = {
   fxSeen: new Set(), // play / trick / head ids already animated
   fxPrimed: false, // false until the first table render, so a reload does not replay old plays
   counterOpen: readPref('counterOpen', window.innerWidth >= 820 ? '1' : '0') === '1',
+  forceLandscape: readPref('forceLandscape', '0') === '1',
 };
 
 const BIG_TRICK_POINTS = 30;
@@ -355,7 +364,10 @@ function renderLobby(v) {
         <h2>房间码，发给朋友即可加入</h2>
         <div class="lobby-code">${esc(v.code)}</div>
       </div>
-      <button id="leaveBtn" class="btn btn-danger">离开房间</button>
+      <div class="head-actions">
+        <button type="button" class="btn btn-primary btn-sm head-copy" data-action="copy-link">复制邀请链接</button>
+        <button id="leaveBtn" class="btn btn-danger">离开房间</button>
+      </div>
     </div>
     <div class="invite-row">
       <span class="invite-link">${esc(inviteLink(v.code))}</span>
@@ -414,9 +426,10 @@ function seatAngle(seat, v) {
 
 // Seats sit on an ellipse around the rail; narrow screens and big tables pull them in.
 function seatRadius(v) {
-  const narrow = window.innerWidth < 560;
+  const { w, h } = viewport();
+  const narrow = w < 560;
   const crowded = v.players.length >= 7;
-  const short = window.innerHeight <= 500;
+  const short = h <= LANDSCAPE_MAX_HEIGHT;
   return { x: narrow ? (crowded ? 35 : 37) : 43, y: short ? 38 : 42 };
 }
 
@@ -429,14 +442,16 @@ function seatPoint(seat, v, scale = 1) {
 // Where a seat's latest play lands: between the seat and the centre.
 function playPoint(seat, v) {
   const a = seatAngle(seat, v);
-  const narrow = window.innerWidth < 560;
+  const narrow = viewport().w < 560;
   const r = seatRadius(v);
   const scale = narrow || v.players.length >= 7 ? 0.5 : 0.56;
   return { x: 50 + r.x * scale * Math.cos(a), y: 50 + r.y * scale * Math.sin(a) };
 }
 
 function renderTable(v) {
-  const stage = document.querySelector('.felt-wrap').getBoundingClientRect();
+  // Layout size (offsetWidth/Height), not the on-screen box, so this also holds when the page is rotated.
+  const wrap = document.querySelector('.felt-wrap');
+  const stage = { width: wrap.offsetWidth, height: wrap.offsetHeight };
   const effects = [];
   const seats = [];
   for (const p of v.players) {
@@ -553,13 +568,14 @@ function renderHand(v) {
 
   const baseWidth = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w')) || 64;
   const available = Math.max(160, area.clientWidth - 24);
-  const twoRows = window.innerWidth < 700 && window.innerHeight > 500 && cards.length >= TWO_ROW_MIN_CARDS;
+  const { w, h } = viewport();
+  const twoRows = w < 700 && h > LANDSCAPE_MAX_HEIGHT && cards.length >= TWO_ROW_MIN_CARDS;
   const rows = twoRows ? [cards.slice(0, Math.ceil(cards.length / 2)), cards.slice(Math.ceil(cards.length / 2))] : [cards];
   const widest = Math.max(...rows.map((r) => r.length));
   const gaps = Math.max(...rows.map((r) => r.filter((c, i) => i > 0 && c.groupStart).length)) * GROUP_GAP;
   // Short hands get bigger cards (up to 35% larger) when the row has room; long ones keep the base size.
   const roomy = (available - gaps) / (1 + 0.5 * (widest - 1));
-  const short = window.innerHeight <= 500; // phone in landscape: no vertical room to grow
+  const short = h <= LANDSCAPE_MAX_HEIGHT; // phone in landscape: no vertical room to grow
   const cardWidth = short ? baseWidth : Math.round(Math.max(baseWidth, Math.min(baseWidth * 1.35, roomy)));
   const step = Math.max(MIN_STEP, Math.min(cardWidth * 0.5, (available - gaps - cardWidth) / Math.max(1, widest - 1)));
 
@@ -803,10 +819,12 @@ document.addEventListener('click', (e) => {
     case 'nextBtn': run(() => api('/api/rooms/next')); break;
     case 'restartBtn': run(() => api('/api/rooms/restart')); break;
     case 'clearBtn': state.selected.clear(); render(); break;
+    case 'rotateBtn': toggleLandscape(); break;
     case 'copyLinkBtn':
     case 'roomBadge':
       copyInvite();
       break;
+
     case 'counterToggle':
       state.counterOpen = !state.counterOpen;
       writePref('counterOpen', state.counterOpen ? '1' : '0');
@@ -828,7 +846,9 @@ document.addEventListener('click', (e) => {
     case 'passBtn': run(async () => { await api('/api/rooms/pass'); state.selected.clear(); }); break;
     case 'playBtn': run(async () => { await api('/api/rooms/play', { cards: [...state.selected] }); state.selected.clear(); render(); }); break;
     case 'returnBtn': run(async () => { await api('/api/rooms/return', { card: [...state.selected][0] }); state.selected.clear(); }); break;
-    default: break;
+    default:
+      if (target.dataset.action === 'copy-link') copyInvite();
+      break;
   }
 });
 
@@ -872,4 +892,39 @@ if (roomFromUrl) {
 }
 render();
 
-window.addEventListener('resize', () => { if (state.view && state.view.phase !== 'lobby') renderTable(state.view); });
+// ---- landscape --------------------------------------------------------------------
+// Phones held sideways get the compact landscape layout. The 横屏 button asks the browser to go
+// fullscreen and lock landscape; where that is not allowed (iOS Safari) the page rotates itself.
+
+function applyOrientation() {
+  const portrait = window.innerHeight > window.innerWidth;
+  const rotated = IS_TOUCH && state.forceLandscape && portrait;
+  const root = document.documentElement;
+  root.classList.toggle('rotated', rotated);
+  root.classList.toggle('landscape', rotated || (!portrait && window.innerHeight <= LANDSCAPE_MAX_HEIGHT));
+  const btn = $('rotateBtn');
+  btn.hidden = !IS_TOUCH || (!portrait && !state.forceLandscape);
+  btn.textContent = state.forceLandscape ? '竖屏' : '横屏';
+  if (state.view && state.view.phase !== 'lobby') renderTable(state.view);
+}
+
+async function toggleLandscape() {
+  state.forceLandscape = !state.forceLandscape;
+  writePref('forceLandscape', state.forceLandscape ? '1' : '0');
+  try {
+    if (state.forceLandscape) {
+      await document.documentElement.requestFullscreen?.();
+      await screen.orientation?.lock?.('landscape');
+    } else {
+      screen.orientation?.unlock?.();
+      if (document.fullscreenElement) await document.exitFullscreen();
+    }
+  } catch {
+    // Not supported (e.g. iOS Safari): applyOrientation rotates the page instead.
+  }
+  applyOrientation();
+}
+
+window.addEventListener('resize', applyOrientation);
+window.addEventListener('orientationchange', applyOrientation);
+applyOrientation();
