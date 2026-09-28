@@ -50,6 +50,18 @@ test('ffa: last pays 20 to head', () => {
   assert.equal(r.winner, null);
 });
 
+test('team 6p: sweep settlement and tribute', () => {
+  const r = settleHand({
+    teams: T6, captured: [30, 40, 30, 40, 30, 30], ranking: [0, 2, 4, 1, 3, 5], finished: [0, 2, 4],
+  });
+  assert.equal(r.sweep, true);
+  assert.equal(r.winner, 0);
+  assert.deepEqual(r.score, [150, 50]);
+  assert.deepEqual(tributePairs({ teams: T6, ranking: [0, 2, 4, 1, 3, 5], winner: r.winner, sweep: r.sweep }), [
+    { from: 5, to: 0 }, { from: 3, to: 2 },
+  ]);
+});
+
 test('tribute pairs: sweep -> last two give to winners 1st and 2nd', () => {
   assert.deepEqual(tributePairs({ teams: T4, ranking: [0, 2, 1, 3], winner: 0, sweep: true }), [
     { from: 3, to: 0 }, { from: 1, to: 2 },

@@ -53,6 +53,9 @@ for (const [playerCount, decks] of [[4, 2], [5, 2], [6, 2], [7, 3], [8, 3], [6, 
       assert.equal(state.captured.reduce((a, b) => a + b, 0) + sumPoints(leftInHands), 100 * decks, 'points conserved');
       assert.deepEqual(replay(initial, actions).state, state, 'replay reproduces the hand');
       findHighlights({ events, teams: match.teams, decks });
+      const lastEvent = events[events.length - 1];
+      assert.equal(lastEvent.type, 'hand_end', 'the hand ends with a hand_end event');
+      assert.deepEqual(lastEvent.ranking, ranking(state));
       ({ match } = recordHand(match, { ranking: ranking(state), finished: state.finished, captured: state.captured }));
     }
     const deltas = computeRatingDeltas(match, [...Array(playerCount).keys()].map((seat) => ({
