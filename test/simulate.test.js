@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMatch, prepareHand, completeReturns, recordHand, isMatchOver } from '../engine/match.js';
 import { createHandState, apply, replay, ranking } from '../engine/game.js';
-import { botAction } from '../engine/bot.js';
+import { botAction, botContext } from '../engine/bot.js';
 import { sumPoints } from '../engine/cards.js';
 import { lowestCard } from '../engine/tribute.js';
 import { findHighlights } from '../engine/highlights.js';
@@ -22,20 +22,7 @@ function playHand(match) {
   while (!state.over) {
     assert.ok(actions.length < MAX_ACTIONS, 'hand must terminate');
     const seat = state.turn;
-    const top = state.trick?.top ?? null;
-    const topSeat = state.trick?.topSeat;
-    const opponents = state.hands.filter((h, i) => h.length && (match.teams ? match.teams[i] !== match.teams[seat] : i !== seat));
-    const action = {
-      seat,
-      ...botAction({
-        hand: state.hands[seat],
-        top,
-        decks: match.decks,
-        topIsTeammate: Boolean(match.teams) && top !== null && match.teams[topSeat] === match.teams[seat] && topSeat !== seat,
-        trickPoints: state.trick ? sumPoints(state.trick.cards) : 0,
-        opponentMinCards: Math.min(...opponents.map((h) => h.length)),
-      }),
-    };
+    const action = { seat, ...botAction(botContext(state, seat)) };
     const r = apply(state, action);
     state = r.state;
     actions.push(action);
