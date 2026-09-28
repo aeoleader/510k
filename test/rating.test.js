@@ -43,7 +43,7 @@ test('team: tie broken by sweeps, else draw', () => {
 
 test('team: leaving early counts as a loss, no sweep bonus, x1.5 on the loss', () => {
   const d = computeRatingDeltas(teamMatch(), everyone([60, 60, 60, 60], { 0: { leftEarly: true } }));
-  assert.equal(d[0].delta, Math.round((-20 - 6 + 3) * 1.5));
+  assert.equal(d[0].delta, -35); // raw -23 x 1.5 = -34.5 -> -35 (half away from zero)
 });
 
 test('unrated seats get null', () => {
@@ -71,6 +71,15 @@ test('ffa: ties on total and heads share the average base', () => {
 
 test('ffa: leaving early drops to last place', () => {
   const d = computeRatingDeltas(ffaMatch(), everyone([60, 60, 60, 60, 60], { 2: { leftEarly: true } }));
-  // seat 2 is last: -20 + 5 heads = -15, x1.0 tier x1.5 = -22.5 -> -22
-  assert.equal(d[2].delta, -22);
+  // seat 2 is last: -20 + 5 heads = -15, x1.0 tier x1.5 = -22.5 -> -23 (half away from zero)
+  assert.equal(d[2].delta, -23);
+});
+
+test('ffa: 7-player tie averages unrounded bases', () => {
+  const match = {
+    playerCount: 7, decks: 3, teams: null,
+    totals: [900, 500, 400, 400, 100, 50, 0], heads: [0, 0, 0, 0, 0, 0, 0], tails: [0, 0, 0, 0, 0, 0, 0], sweeps: [0, 0],
+  };
+  const d = computeRatingDeltas(match, everyone([60, 60, 60, 60, 60, 60, 60]));
+  assert.deepEqual(d.map((x) => x.delta), [20, 13, 3, 3, -7, -13, -20]);
 });

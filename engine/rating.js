@@ -24,10 +24,13 @@ export function rankInfo(rating) {
   return { ...TIERS[index], index, stars };
 }
 
+// 四舍五入 (half away from zero), applied once at the very end.
+export const roundRating = (x) => Math.sign(x) * Math.round(Math.abs(x));
+
 function finalize(raw, ratingBefore, leftEarly) {
-  if (raw >= 0) return raw;
+  if (raw >= 0) return roundRating(raw);
   const factor = rankInfo(ratingBefore).factor * (leftEarly ? LEFT_EARLY_FACTOR : 1);
-  return Math.round(raw * factor);
+  return roundRating(raw * factor);
 }
 
 function teamDeltas(match, players) {
@@ -49,7 +52,7 @@ function teamDeltas(match, players) {
   });
 }
 
-const placeBase = (r, n) => Math.round((WIN_BASE * (n + 1 - 2 * r)) / (n - 1));
+const placeBase = (r, n) => (WIN_BASE * (n + 1 - 2 * r)) / (n - 1);
 
 function ffaDeltas(match, players) {
   const n = match.playerCount;
@@ -65,7 +68,7 @@ function ffaDeltas(match, players) {
     while (j + 1 < n && key(order[j + 1]).join() === key(order[i]).join()) j++;
     let sum = 0;
     for (let r = i + 1; r <= j + 1; r++) sum += placeBase(r, n);
-    const avg = Math.round(sum / (j - i + 1));
+    const avg = sum / (j - i + 1);
     for (let k = i; k <= j; k++) base.set(order[k], avg);
     i = j + 1;
   }
