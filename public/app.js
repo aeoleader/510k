@@ -36,6 +36,7 @@ const state = {
   accountToken: readPref('accountToken', null),
   account: null,
   entryMode: readPref('entryMode', 'guest'),
+  invite: null, // room code from an invite link we have not joined yet
   fxSeen: new Set(), // play / trick / head ids already animated
   fxPrimed: false, // false until the first table render, so a reload does not replay old plays
   counterOpen: readPref('counterOpen', window.innerWidth >= 820 ? '1' : '0') === '1',
@@ -93,17 +94,54 @@ function setAccount(token, account) {
   renderAccountChip();
 }
 
-function toast(text) {
+function toast(text, kind = 'error') {
   const el = $('toast');
   el.textContent = text;
+  el.classList.toggle('ok', kind === 'ok');
   el.hidden = false;
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => { el.hidden = true; }, 2200);
 }
 
+const inviteLink = (code) => `${location.origin}/?room=${code}`;
+
+// The async clipboard API needs HTTPS; over plain HTTP fall back to a hidden textarea + execCommand.
+async function copyText(text) {
+  if (window.isSecureContext && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch { /* fall through */ }
+  }
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', '');
+  area.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+  document.body.append(area);
+  area.select();
+  area.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  area.remove();
+  return ok;
+}
+
+async function copyInvite() {
+  if (!state.code) return;
+  if (await copyText(inviteLink(state.code))) {
+    toast('邀请链接已复制，发给朋友点开就能加入', 'ok');
+    return;
+  }
+  // Last resort: select the visible link so the player can copy it by hand.
+  const link = document.querySelector('.invite-link');
+  if (link) window.getSelection().selectAllChildren(link);
+  toast('复制失败，请长按链接手动复制');
+}
+
 function enterRoom({ code, token }) {
   state.code = code;
   state.token = token;
+  state.invite = null;
   writeSession(`token:${code}`, token);
   const url = new URL(location.href);
   url.searchParams.set('room', code);
@@ -233,6 +271,13 @@ function renderAccountChip() {
 }
 
 function renderEntry() {
+  // Opened from an invite link: say so, and make joining (not creating) the main action.
+  const invite = state.invite;
+  $('inviteBanner').hidden = !invite;
+  if (invite) $('inviteBanner').innerHTML = `你被邀请加入房间 <b>${esc(invite)}</b>${state.account ? '' : '，填个昵称就能进'}`;
+  $('joinBtn').className = `btn ${invite ? 'btn-primary' : ''}`;
+  $('createBtn').className = `btn btn-block ${invite ? 'btn-ghost' : 'btn-primary'}`;
+  $('joinBtn').textContent = invite ? `加入 ${invite}` : '加入';
   const panel = $('accountPanel');
   if (state.account) {
     panel.innerHTML = `
@@ -308,6 +353,10 @@ function renderLobby(v) {
         <div class="lobby-code">${esc(v.code)}</div>
       </div>
       <button id="leaveBtn" class="btn btn-danger">离开房间</button>
+    </div>
+    <div class="invite-row">
+      <span class="invite-link">${esc(inviteLink(v.code))}</span>
+      <button id="copyLinkBtn" type="button" class="btn btn-primary btn-sm">复制邀请链接</button>
     </div>
     <div class="seat-grid">${slots.join('')}</div>
     <div class="lobby-controls">
@@ -715,6 +764,10 @@ document.addEventListener('click', (e) => {
     case 'nextBtn': run(() => api('/api/rooms/next')); break;
     case 'restartBtn': run(() => api('/api/rooms/restart')); break;
     case 'clearBtn': state.selected.clear(); render(); break;
+    case 'copyLinkBtn':
+    case 'roomBadge':
+      copyInvite();
+      break;
     case 'counterToggle':
       state.counterOpen = !state.counterOpen;
       writePref('counterOpen', state.counterOpen ? '1' : '0');
@@ -750,7 +803,7 @@ document.addEventListener('change', (e) => {
 $('codeInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('joinBtn').click(); });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
-  if (e.target.id === 'nameInput') $('createBtn').click();
+  if (e.target.id === 'nameInput') $(state.invite ? 'joinBtn' : 'createBtn').click();
   if (e.target.id === 'passwordInput') $('loginBtn')?.click();
 });
 document.addEventListener('input', (e) => { if (e.target.id === 'nameInput') writePref('name', e.target.value.trim()); });
@@ -772,6 +825,7 @@ if (roomFromUrl) {
   $('codeInput').value = code;
   const token = readSession(`token:${code}`);
   if (token) run(async () => enterRoom(await api('/api/rooms/join', { code, token })));
+  else state.invite = code;
 }
 render();
 

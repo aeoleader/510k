@@ -151,6 +151,19 @@ select { cursor: pointer; }
 .lobby-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .lobby-head h2 { margin: 0; font-size: 15px; font-weight: 500; color: var(--muted); }
 .lobby-code { font-size: 56px; font-weight: 800; letter-spacing: 12px; line-height: 1; color: var(--accent); }
+.invite-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 12px; border-radius: var(--radius-panel); background: var(--panel); border: 1px solid var(--line);
+}
+.invite-link { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--muted); font-size: 14px; user-select: all; -webkit-user-select: all; }
+.invite-banner {
+  padding: 10px 14px; border-radius: 10px; font-size: 14px;
+  background: rgba(240, 165, 58, 0.12); border: 1px solid rgba(240, 165, 58, 0.45); color: var(--text);
+}
+.invite-banner b { color: var(--accent-2); letter-spacing: 2px; }
+button.room-code { background: transparent; cursor: pointer; font: inherit; font-weight: 700; }
+button.room-code:hover { border-color: var(--accent); color: var(--text); }
+.toast.ok { background: #12351f; border-color: rgba(114, 207, 152, 0.5); color: #d6f5e2; }
 .seat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .seat-slot {
   position: relative; min-height: 104px; padding: 14px; border-radius: var(--radius-panel);
