@@ -1,0 +1,10 @@
+{
+  "name": "五十K",
+  "short_name": "五十K",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "background_color": "#0b1d19",
+  "theme_color": "#0b1d19",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

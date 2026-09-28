@@ -16,6 +16,7 @@ const MIME = {
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
+  '.webmanifest': 'application/manifest+json',
 };
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 const MAX_CONNECTIONS = 4000;

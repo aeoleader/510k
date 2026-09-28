@@ -33,7 +33,11 @@
   --shadow: 0 16px 40px rgba(2, 10, 8, 0.45);
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
   --topbar-h: 56px;
-  --app-h: 100dvh; /* the height the app lays out in; the viewport width when rotated */
+  /* --vw/--vh are set by script from the real viewport (dvh units are missing in older phone browsers) */
+  --app-h: var(--vh, 100vh); /* the height the app lays out in; the viewport width when rotated */
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
 }
 
 * { box-sizing: border-box; }
@@ -55,6 +59,8 @@ body {
 
 button, input, select { font: inherit; color: inherit; }
 button, a, input, select { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+/* no long-press menus or text selection on cards (iOS Safari, Huawei and OPPO browsers) */
+.card, .hand, .fan, .seat, .pick { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 b { font-weight: 800; }
 
 /* ---- buttons & inputs ------------------------------------------------------ */
@@ -92,7 +98,7 @@ select { cursor: pointer; }
   height: var(--topbar-h); padding: 0 16px;
   border-bottom: 1px solid var(--line);
   background: rgba(8, 22, 18, 0.6);
-  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
 }
 .wordmark { font-size: 20px; font-weight: 700; letter-spacing: 1px; white-space: nowrap; }
 .wordmark b, .entry-title b { color: var(--accent); }
@@ -214,7 +220,7 @@ html.landscape .swap-hint { margin: -4px 0 0; font-size: 12px; }
 .felt-wrap { position: relative; min-height: 0; overflow: hidden; }
 .dock { min-width: 0; }
 .felt {
-  position: absolute; inset: 9% 11% 7%;
+  position: absolute; top: 9%; right: 11%; bottom: 7%; left: 11%;
   border-radius: 50% / 46%;
   background:
     radial-gradient(ellipse 70% 60% at 50% 45%, rgba(255, 255, 255, 0.08), transparent 70%),
@@ -247,7 +253,7 @@ html.landscape .swap-hint { margin: -4px 0 0; font-size: 12px; }
 .log-ticker li:first-child { color: rgba(238, 242, 234, 0.8); }
 
 /* seats around the rail */
-.seats { position: absolute; inset: 0; pointer-events: none; }
+.seats { position: absolute; top: 0; right: 0; bottom: 0; left: 0; pointer-events: none; }
 .seat {
   position: absolute; left: var(--x); top: var(--y); transform: translate(-50%, -50%);
   display: grid; justify-items: center; gap: 6px; pointer-events: auto;
@@ -255,7 +261,7 @@ html.landscape .swap-hint { margin: -4px 0 0; font-size: 12px; }
 }
 .seat .ring { position: relative; display: grid; place-items: center; }
 .seat .ring::before {
-  content: ""; position: absolute; inset: -7px; border-radius: 50%;
+  content: ""; position: absolute; top: -7px; right: -7px; bottom: -7px; left: -7px; border-radius: 50%;
   background: conic-gradient(var(--accent) calc(var(--p, 0) * 1turn), transparent 0);
   -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
   mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
@@ -292,6 +298,8 @@ html.landscape .swap-hint { margin: -4px 0 0; font-size: 12px; }
   display: grid; justify-items: center; gap: 4px; pointer-events: none; z-index: 1;
 }
 .played.fresh { animation: fly-in 0.42s var(--ease); }
+.played.fresh .card { animation: land-pop 0.5s var(--ease) 0.3s; }
+@keyframes land-pop { 40% { transform: translateY(-4px) scale(1.06); box-shadow: 0 0 0 2px rgba(255, 244, 220, 0.7), 0 6px 14px rgba(0, 0, 0, 0.4); } }
 .played .pass-tag { padding: 3px 12px; border-radius: 999px; background: rgba(0, 0, 0, 0.3); color: rgba(238, 242, 234, 0.7); font-size: 13px; }
 .played.is-top .card { box-shadow: 0 0 0 2px var(--accent), 0 4px 10px rgba(0, 0, 0, 0.35); }
 @keyframes fly-in {
@@ -389,7 +397,7 @@ html.landscape .pick { min-height: 28px; padding: 0 10px; font-size: 12px; }
 /* ---- overlays --------------------------------------------------------------------------------- */
 
 .overlay {
-  position: fixed; inset: 0; z-index: 10; padding: 16px;
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 10; padding: 16px;
   display: grid; place-items: center; background: rgba(3, 10, 8, 0.66);
   animation: fade 0.2s ease;
 }
@@ -506,16 +514,16 @@ html.landscape .pick { min-height: 28px; padding: 0 10px; font-size: 12px; }
   animation: tier-glow-king 2s ease-in-out infinite;
 }
 .tier-6::before {
-  content: ""; position: absolute; inset: -2px; z-index: -2; border-radius: inherit;
+  content: ""; position: absolute; top: -2px; right: -2px; bottom: -2px; left: -2px; z-index: -2; border-radius: inherit;
   background: conic-gradient(from var(--tier-spin), #ff3d6e, #ffb800, #3dffb0, #3db4ff, #b43dff, #ff3d6e);
   animation: tier-spin 3s linear infinite;
 }
 .tier-6::after {
-  content: ""; position: absolute; inset: 2px; z-index: -1; border-radius: inherit;
+  content: ""; position: absolute; top: 2px; right: 2px; bottom: 2px; left: 2px; z-index: -1; border-radius: inherit;
   background: radial-gradient(circle at 30% 20%, #5a1f6e, #1a0b24 70%);
 }
 .tier-5 svg, .tier-6 svg { fill: currentColor; }
-.tier-shine { position: absolute; inset: 0; z-index: 1; overflow: hidden; border-radius: inherit; pointer-events: none; }
+.tier-shine { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 1; overflow: hidden; border-radius: inherit; pointer-events: none; }
 .tier-shine::after {
   content: ""; position: absolute; top: 0; bottom: 0; left: -60%; width: 40%;
   background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.75), transparent);
@@ -523,7 +531,7 @@ html.landscape .pick { min-height: 28px; padding: 0 10px; font-size: 12px; }
 }
 .tier-5 .tier-shine::after { animation-duration: 2.2s; }
 .tier-6 .tier-shine::after { background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.55), transparent); animation-duration: 1.8s; }
-.tier-sparkles { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.tier-sparkles { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 2; pointer-events: none; }
 .tier-sparkles i {
   position: absolute; width: 5px; height: 5px; background: #fff;
   clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
@@ -545,7 +553,7 @@ html.landscape .pick { min-height: 28px; padding: 0 10px; font-size: 12px; }
 
 /* ---- play effects --------------------------------------------------------------------------- */
 
-.fx-layer { position: absolute; inset: 0; pointer-events: none; z-index: 5; overflow: visible; }
+.fx-layer { position: absolute; top: 0; right: 0; bottom: 0; left: 0; pointer-events: none; z-index: 5; overflow: visible; }
 .fx { position: absolute; left: var(--x); top: var(--y); transform: translate(-50%, -50%); pointer-events: none; }
 
 .felt-wrap.shake-md { animation: shake 0.45s cubic-bezier(0.36, 0.07, 0.19, 0.97); }
@@ -564,6 +572,7 @@ html.landscape .pick { min-height: 28px; padding: 0 10px; font-size: 12px; }
   box-shadow: 0 0 18px var(--ring, #ffd36a), inset 0 0 12px var(--ring, #ffd36a);
   animation: ring 0.9s var(--ease) var(--delay, 0ms) both;
 }
+.fx-ring-soft { --ring: rgba(255, 244, 220, 0.8); border-width: 3px; width: 30px; height: 30px; animation-duration: 0.6s; }
 .fx-ring-gold { --ring: #ffcf5c; }
 .fx-ring-pure { --ring: #fff0a8; border-width: 6px; }
 .fx-ring-fire { --ring: #ff7a3d; border-width: 6px; }
@@ -621,9 +630,9 @@ html.landscape .pick { min-height: 28px; padding: 0 10px; font-size: 12px; }
   100% { opacity: 0; transform: scale(1.15); }
 }
 
-.fx-flash { position: fixed; inset: 0; left: 0; top: 0; transform: none; background: radial-gradient(circle, rgba(255, 190, 110, 0.55), transparent 70%); animation: flash 0.6s ease-out forwards; z-index: 30; }
+.fx-flash { position: fixed; top: 0; right: 0; bottom: 0; left: 0; transform: none; background: radial-gradient(circle, rgba(255, 190, 110, 0.55), transparent 70%); animation: flash 0.6s ease-out forwards; z-index: 30; }
 .fx-flash-king { background: radial-gradient(circle, rgba(255, 255, 255, 0.85), rgba(255, 120, 220, 0.35) 45%, transparent 75%); }
-.fx-dim { position: fixed; inset: 0; left: 0; top: 0; transform: none; background: rgba(4, 0, 12, 0.6); animation: dim 1.6s ease forwards; z-index: 4; }
+.fx-dim { position: fixed; top: 0; right: 0; bottom: 0; left: 0; transform: none; background: rgba(4, 0, 12, 0.6); animation: dim 1.6s ease forwards; z-index: 4; }
 @keyframes flash { from { opacity: 1; } to { opacity: 0; } }
 @keyframes dim { 0% { opacity: 0; } 15%, 70% { opacity: 1; } 100% { opacity: 0; } }
 
@@ -754,7 +763,7 @@ a.wordmark { color: inherit; text-decoration: none; }
 .replay-controls {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
   padding: 10px 16px max(12px, env(safe-area-inset-bottom));
-  background: rgba(8, 22, 18, 0.94); border-top: 1px solid var(--line); backdrop-filter: blur(8px);
+  background: rgba(8, 22, 18, 0.94); border-top: 1px solid var(--line); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
 }
 .timeline { position: relative; width: min(1068px, 100%); margin: 0 auto 8px; }
 .timeline input { width: 100%; min-height: 24px; padding: 0; background: transparent; border: 0; accent-color: var(--accent); }
@@ -873,7 +882,7 @@ a.wordmark { color: inherit; text-decoration: none; }
   .entry-title { font-size: 64px; }
   .seat-grid { grid-template-columns: repeat(2, 1fr); }
   .lobby-code { font-size: 44px; letter-spacing: 8px; }
-  .felt { inset: 13% 7% 9%; }
+  .felt { top: 13%; right: 7%; bottom: 9%; left: 7%; }
   .seat { width: 92px; }
   .seat .avatar { --size: 36px; }
   .seat .nameplate { min-width: 78px; padding: 4px 6px; }
@@ -894,7 +903,7 @@ a.wordmark { color: inherit; text-decoration: none; }
   .account-chip .chip-name { display: none; }
   .account-chip { margin-left: auto; }
   .seat .nameplate .tier-badge { display: none; }
-  .seat .stats { gap: 5px; font-size: 11px; }
+  .seat .stats { gap: 4px; font-size: 11px; white-space: nowrap; }
   .seat .nameplate { min-width: 0; max-width: 84px; }
   .backs { left: -14px; }
   .backs i { width: 12px; height: 17px; margin-left: -8px; }
@@ -921,10 +930,10 @@ html.landscape { --card-w: 42px; --topbar-h: 42px; }
 html.landscape .topbar { gap: 10px; }
 html.landscape .wordmark { font-size: 16px; }
 html.landscape .rules-link, html.landscape .log-ticker, html.landscape .backs, html.landscape .seat .nameplate .tier-badge, html.landscape .hand-progress { display: none; }
-html.landscape .felt { inset: 7% 12% 4%; }
+html.landscape .felt { top: 7%; right: 12%; bottom: 4%; left: 12%; }
 html.landscape .seat { width: 110px; gap: 2px; }
 html.landscape .seat .avatar { --size: 26px; font-size: 12px; }
-html.landscape .seat .ring::before { inset: -5px; }
+html.landscape .seat .ring::before { top: -5px; right: -5px; bottom: -5px; left: -5px; }
 html.landscape .seat .nameplate { display: flex; gap: 6px; padding: 2px 8px; min-width: 0; max-width: 150px; }
 html.landscape .seat .name { font-size: 11px; max-width: 5em; }
 html.landscape .seat .stats { font-size: 11px; gap: 4px; white-space: nowrap; }
@@ -939,16 +948,62 @@ html.landscape .action-bar { min-height: 38px; gap: 6px; }
 html.landscape .action-bar .btn { min-height: 34px; padding: 0 14px; }
 html.landscape .timer { width: 32px; height: 32px; font-size: 12px; }
 html.landscape .hand { padding-top: 16px; min-height: calc(var(--card-w) * 1.4 + 18px); }
-html.landscape .fx-stamp span { font-size: 26px; }
-html.landscape .fx-stamp-king span { font-size: 44px; }
+html.landscape .fx-stamp span { font-size: 34px; }
+html.landscape .fx-stamp-bomb span { font-size: 40px; }
+html.landscape .fx-stamp-bigbomb span { font-size: 48px; }
+html.landscape .fx-stamp-king span { font-size: 64px; }
+html.landscape .fx-banner { top: 38%; }
 
-/* landscape: actions and quick picks share one row above the hand */
-html.landscape .dock { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 8px; }
-html.landscape .action-bar { justify-content: flex-start; flex-wrap: nowrap; }
+/* landscape table: no notch overlap, my seat lives in the dock, big hand on the left, 2x2 actions on the right */
+html.landscape .topbar { padding-left: max(12px, var(--safe-l)); padding-right: max(12px, var(--safe-r)); }
+html.landscape .felt-wrap { margin: 0 var(--safe-r) 0 var(--safe-l); }
+html.landscape .felt { top: 11%; right: 12%; bottom: 3%; left: 12%; }
+html.landscape .seat.is-hidden-me { display: none; }
+/* landscape seats: avatar beside the nameplate, half the height of the portrait stack */
+html.landscape .seat { display: flex; flex-direction: row; align-items: center; width: auto; gap: 4px; }
+html.landscape .seat .nameplate { display: grid; justify-items: start; gap: 0; padding: 2px 8px; max-width: 112px; }
+html.landscape .toast { top: calc(var(--topbar-h) + 6px); bottom: auto; }
+html.landscape .dock {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; column-gap: 10px;
+  padding: 2px max(10px, var(--safe-r)) max(4px, var(--safe-b)) max(10px, var(--safe-l));
+}
+html.landscape .quick-picks { grid-column: 1; grid-row: 1; justify-content: flex-start; margin: 0; padding: 2px 0 0; min-height: 30px; }
+html.landscape .hand { grid-column: 1; grid-row: 2; padding: 20px 0 2px; min-height: calc(var(--card-w) * 1.4 + 22px); }
+html.landscape .action-bar {
+  grid-column: 2; grid-row: 1 / span 2; align-self: center;
+  display: grid; grid-template-columns: auto auto; gap: 6px; min-height: 0;
+  grid-template-areas: "sort clear" "pass hint" "timer play";
+}
 html.landscape .action-bar .spacer { display: none; }
-html.landscape .quick-picks { justify-content: flex-start; margin: 0; padding: 0; }
-html.landscape .hand { grid-column: 1 / -1; }
+html.landscape .action-bar .sort-btn { grid-area: sort; }
+html.landscape .action-bar #clearBtn { grid-area: clear; }
+html.landscape .action-bar #passBtn { grid-area: pass; }
+html.landscape .action-bar #hintBtn { grid-area: hint; }
+html.landscape .action-bar .timer { grid-area: timer; justify-self: center; }
+html.landscape .action-bar #playBtn { grid-area: play; min-height: 42px; font-size: 16px; }
+html.landscape .action-bar .status { grid-column: 1 / -1; font-size: 12px; text-align: center; }
 html.landscape .sort-btn .long { display: none; }
+.my-info { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.my-info .pts { color: var(--accent-2); }
+.my-info .place { color: var(--accent); }
+
+/* whose turn: a pulsing ring on that seat and a pointer in the middle of the felt */
+.turn-now { display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px; border-radius: 999px; background: rgba(0, 0, 0, 0.3); font-size: 13px; color: var(--text); }
+.turn-now b { color: var(--accent-2); }
+.turn-now.me { background: var(--accent); color: var(--accent-ink); font-weight: 800; animation: pulse-me 1.2s ease-in-out infinite; }
+.turn-arrow { width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-bottom: 10px solid var(--accent-2); transform: rotate(calc(var(--a) + 90deg)); }
+.seat.is-turn .nameplate { background: rgba(240, 165, 58, 0.22); border-color: var(--accent); }
+.seat.is-turn .avatar { animation: pulse-turn 1.1s ease-in-out infinite; }
+@keyframes pulse-turn { 50% { box-shadow: 0 0 0 3px var(--team-color, var(--line-strong)), 0 0 0 9px rgba(240, 165, 58, 0.35); } }
+@keyframes pulse-me { 50% { box-shadow: 0 0 0 6px rgba(240, 165, 58, 0.3); } }
+.dock.my-turn { background: linear-gradient(180deg, rgba(240, 165, 58, 0.14), rgba(4, 12, 10, 0.55) 45%); box-shadow: inset 0 2px 0 var(--accent); }
+
+/* the latest winning play stands out a little more */
+.played.is-top { z-index: 2; }
+.played.is-top .fan { transform: scale(1.08); }
+html.landscape .card.md { --w: 40px; }
+html.landscape .card.sm { --w: 32px; }
+html.landscape .played .pass-tag { font-size: 12px; padding: 2px 10px; }
 
 /* landscape: entry, lobby and dialogs are compact enough to fit one screen without scrolling */
 html.landscape .entry { gap: 20px; padding: 10px 16px; align-items: center; min-height: 0; }
@@ -991,11 +1046,16 @@ html.landscape .standing .total { font-size: 18px; }
 html.landscape .rating-change { padding: 6px 10px; }
 
 /* forced landscape on a phone held upright (iOS cannot lock orientation): rotate the whole app */
-html.rotated { --app-h: 100dvw; overflow: hidden; }
+/* rotated clockwise: the phone's top notch is now on the app's left, the home bar on its right */
+html.rotated {
+  --app-h: var(--vw, 100vw); overflow: hidden;
+  --safe-l: env(safe-area-inset-top, 0px); --safe-r: env(safe-area-inset-bottom, 0px); --safe-b: env(safe-area-inset-left, 0px);
+}
 html.rotated body {
   position: fixed; top: 0; left: 0; overflow: hidden;
-  width: 100dvh; height: 100dvw; min-height: 0;
-  transform-origin: top left; transform: translateX(100dvw) rotate(90deg);
+  width: var(--vh, 100vh); height: var(--vw, 100vw); min-height: 0;
+  -webkit-transform-origin: top left; transform-origin: top left;
+  -webkit-transform: translateX(var(--vw, 100vw)) rotate(90deg); transform: translateX(var(--vw, 100vw)) rotate(90deg);
 }
 .rotate-btn { display: none; }
 @media (pointer: coarse) {

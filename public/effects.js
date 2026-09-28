@@ -54,6 +54,12 @@ export class Effects {
 
   // A play landed at (x, y), in percent of the table stage.
   play({ type, level, x, y }) {
+    if (!type) return;
+    if (type !== 'x510k' && type !== 'p510k' && type !== 'bomb' && type !== 'joker_bomb') {
+      // Every normal play still gets a light landing ring, so the table shows who just moved.
+      this.ring(x, y, 'soft');
+      return;
+    }
     if (type === 'x510k' || type === 'p510k') {
       const pure = type === 'p510k';
       this.ring(x, y, pure ? 'pure' : 'gold');

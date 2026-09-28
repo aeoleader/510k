@@ -131,7 +131,7 @@ function ratingChart(history, current) {
     if (v < hi) grid.push(`<text class="axis tier" x="${CHART.left + 6}" y="${y(v) - 6}">${tier.name}</text>`);
   }
   const path = points.map((p, i) => `${i ? 'L' : 'M'}${x(p.i).toFixed(1)},${y(p.rating).toFixed(1)}`).join(' ');
-  const last = points.at(-1);
+  const last = points[points.length - 1];
   const table = history.map((h, i) => `<tr><td>第 ${i + 1} 轮</td><td>${date(h.at)}</td><td>${h.before}</td><td>${h.after}</td><td>${h.after - h.before >= 0 ? '+' : ''}${h.after - h.before}</td></tr>`).join('');
   return `
     <figure class="chart" aria-label="段位分随对局的变化，当前 ${current} 分">

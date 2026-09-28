@@ -1,5 +1,5 @@
 import { identify, beats } from './combos.js';
-import { sumPoints, MIN_DECKS, MAX_DECKS } from './cards.js';
+import { sumPoints, clone, MIN_DECKS, MAX_DECKS } from './cards.js';
 
 export class GameError extends Error {
   constructor(code) {
@@ -82,7 +82,7 @@ export function apply(state, action) {
   if (state.over) throw new GameError('hand_over');
   if (action === null || typeof action !== 'object') throw new GameError('bad_action');
   if (action.seat !== state.turn) throw new GameError('not_your_turn');
-  const s = structuredClone(state);
+  const s = clone(state);
   const events = [];
   const emit = (e) => events.push({ seq: s.seq++, ...e });
   // The server sets `auto` itself when it plays a hand for an idle/absent seat;

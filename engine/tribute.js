@@ -1,4 +1,4 @@
-import { isJoker, compareCards } from './cards.js';
+import { isJoker, compareCards, last } from './cards.js';
 
 export const PENALTY_PER_PLAYER = 20;
 
@@ -59,7 +59,7 @@ export function applyTribute({ hands, pairs, decks }) {
   const next = hands.map((h) => [...h]);
   const given = [];
   for (const { from, to } of pairs) {
-    const card = [...next[from]].sort(compareCards).at(-1);
+    const card = last([...next[from]].sort(compareCards));
     next[from] = next[from].filter((c) => c !== card);
     next[to] = [...next[to], card].sort(compareCards);
     given.push({ from, to, card });

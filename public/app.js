@@ -23,6 +23,9 @@ const MAX_SEATS = 8;
 const $ = (id) => document.getElementById(id);
 const IS_TOUCH = window.matchMedia('(pointer: coarse)').matches;
 const LANDSCAPE_MAX_HEIGHT = 500; // phones held sideways; tablets keep the normal layout
+const LANDSCAPE_ARC_EXTRA = 0.14; // fraction of pi the landscape seat arc extends below the middle on each side
+
+const isLandscape = () => document.documentElement.classList.contains('landscape');
 
 // The size the app lays out in: when the page is rotated into landscape, width and height swap.
 function viewport() {
@@ -424,9 +427,16 @@ function renderScoreboard(v) {
   sb.innerHTML = `<span class="hand-label"><span class="long">第 </span>${v.handNo} / ${v.handsPerMatch}<span class="long"> 局</span></span><span class="hand-progress" aria-hidden="true">${dots}</span>${scores}`;
 }
 
+// Portrait: everyone around the table, me at the bottom. Landscape: my seat moves into the dock,
+// and the others spread clockwise from the left edge, over the top, to the right edge.
 function seatAngle(seat, v) {
   const n = v.players.length;
   const rel = (seat - (v.you?.seat ?? 0) + n) % n;
+  if (isLandscape() && rel > 0) {
+    // The arc reaches a little below the middle on both sides so side seats do not stack up.
+    const spread = LANDSCAPE_ARC_EXTRA * Math.PI;
+    return Math.PI - spread + ((rel - 1) * (Math.PI + 2 * spread)) / Math.max(1, n - 2);
+  }
   return Math.PI / 2 + (rel * 2 * Math.PI) / n;
 }
 
@@ -436,6 +446,7 @@ function seatRadius(v) {
   const narrow = w < 560;
   const crowded = v.players.length >= 7;
   const short = h <= LANDSCAPE_MAX_HEIGHT;
+  if (isLandscape()) return { x: 43, y: 40 };
   return { x: narrow ? (crowded ? 35 : 37) : 43, y: short ? 38 : 42 };
 }
 
@@ -446,11 +457,13 @@ function seatPoint(seat, v, scale = 1) {
 }
 
 // Where a seat's latest play lands: between the seat and the centre.
+// In landscape my own plays land just above the dock.
 function playPoint(seat, v) {
+  if (isLandscape() && seat === v.you?.seat) return { x: 50, y: 82 };
   const a = seatAngle(seat, v);
   const narrow = viewport().w < 560;
   const r = seatRadius(v);
-  const scale = narrow || v.players.length >= 7 ? 0.5 : 0.56;
+  const scale = isLandscape() ? 0.5 : narrow || v.players.length >= 7 ? 0.5 : 0.56;
   return { x: 50 + r.x * scale * Math.cos(a), y: 50 + r.y * scale * Math.sin(a) };
 }
 
@@ -460,9 +473,12 @@ function renderTable(v) {
   const stage = { width: wrap.offsetWidth, height: wrap.offsetHeight };
   const effects = [];
   const seats = [];
+  const landscape = isLandscape();
   for (const p of v.players) {
-    const { x, y } = seatPoint(p.seat, v);
+    const isMe = p.id === v.you?.id;
+    const { x, y } = landscape && isMe ? { x: 50, y: 100 } : seatPoint(p.seat, v);
     const cls = ['seat'];
+    if (landscape && isMe) cls.push('is-hidden-me');
     if (v.turn === p.seat) cls.push('is-turn');
     if (p.place) cls.push('is-out');
     if (!p.online) cls.push('is-offline');
@@ -470,7 +486,6 @@ function renderTable(v) {
     const badge = p.place
       ? `<span class="badge">${p.place === 1 ? '头游' : `第 ${p.place}`}</span>`
       : !p.online ? '<span class="badge muted">托管</span>' : '';
-    const isMe = p.id === v.you?.id;
     seats.push(`
       <div class="${cls.join(' ')}" style="--x:${x}%;--y:${y}%">
         <div class="ring" data-ring="${p.seat}">${avatarHtml(p)}${isMe ? '' : `<span class="backs">${backs}</span>`}${badge}</div>
@@ -489,7 +504,10 @@ function renderTable(v) {
       // Fresh plays fly in from the player's seat; older ones stay put across re-renders.
       const dx = ((x - px) / 100) * stage.width;
       const dy = ((y - py) / 100) * stage.height;
-      const body = action.pass ? '<span class="pass-tag">不要</span>' : fanHtml(action.cards, action.cards.length > 8 ? 'sm' : 'md');
+      // The winning play is shown large; on crowded landscape tables the others shrink so they do not overlap.
+      const crowdedLandscape = landscape && v.players.length >= 6 && !isTop;
+      const size = action.cards && (action.cards.length > 8 || crowdedLandscape) ? 'sm' : 'md';
+      const body = action.pass ? '<span class="pass-tag">不要</span>' : fanHtml(action.cards, size);
       seats.push(`<div class="played ${isTop ? 'is-top' : ''} ${fresh ? 'fresh' : ''}" style="--x:${px}%;--y:${py}%;--dx:${dx}px;--dy:${dy}px">${body}</div>`);
       if (fresh && action.cards) effects.push(() => fx.play({ type: action.type, level: action.level, x: px, y: py }));
       state.fxSeen.add(action.id);
@@ -524,7 +542,8 @@ function renderTable(v) {
   } else {
     center = v.phase === 'playing' ? `<span class="idle">${esc(playerAt(v.turn).name.replace(/\(机器人\)$/, ''))} 先出</span>` : '';
   }
-  $('centerArea').innerHTML = center;
+  $('centerArea').innerHTML = turnIndicator(v) + center;
+  announceMyTurn(v);
   $('logTicker').innerHTML = [...v.log].slice(-3).reverse().map((l) => `<li>${esc(l.text)}</li>`).join('');
 
   renderHand(v);
@@ -559,6 +578,25 @@ const MIN_STEP = 12; // smallest visible slice of a covered card, px
 
 // Lay the hand out to fit the dock width: cards overlap just enough to fit, and on
 // portrait phones a long hand splits into two rows (higher cards on top).
+// "Whose turn": a label in the middle of the felt with an arrow pointing at that seat.
+function turnIndicator(v) {
+  if (v.phase !== 'playing' || v.turn < 0) return '';
+  if (v.turn === v.you?.seat) return '<span class="turn-now me">轮到你出牌</span>';
+  const deg = (seatAngle(v.turn, v) * 180) / Math.PI;
+  return `<span class="turn-now"><i class="turn-arrow" style="--a:${deg}deg" aria-hidden="true"></i>轮到 <b>${esc(playerAt(v.turn).name.replace(/\(机器人\)$/, ''))}</b></span>`;
+}
+
+// When the turn comes to me: a banner, a short vibration where supported, and a lit-up dock.
+function announceMyTurn(v) {
+  const mine = v.phase === 'playing' && v.turn === v.you?.seat;
+  document.querySelector('.dock').classList.toggle('my-turn', mine);
+  if (mine && !state.wasMyTurn && state.fxPrimed) {
+    fx.banner('轮到你了');
+    try { navigator.vibrate?.(40); } catch { /* not supported */ }
+  }
+  state.wasMyTurn = mine;
+}
+
 function renderHand(v) {
   const area = $('handArea');
   const hand = v.you?.hand ?? [];
@@ -581,8 +619,9 @@ function renderHand(v) {
   const gaps = Math.max(...rows.map((r) => r.filter((c, i) => i > 0 && c.groupStart).length)) * GROUP_GAP;
   // Short hands get bigger cards (up to 35% larger) when the row has room; long ones keep the base size.
   const roomy = (available - gaps) / (1 + 0.5 * (widest - 1));
-  const short = h <= LANDSCAPE_MAX_HEIGHT; // phone in landscape: no vertical room to grow
-  const cardWidth = short ? baseWidth : Math.round(Math.max(baseWidth, Math.min(baseWidth * 1.35, roomy)));
+  // Landscape phones: size cards from the screen height (about a fifth of it), not the portrait base size.
+  const landscapeWidth = Math.round(Math.min(66, Math.max(46, (h * 0.2) / 1.4)));
+  const cardWidth = isLandscape() ? landscapeWidth : Math.round(Math.max(baseWidth, Math.min(baseWidth * 1.35, roomy)));
   const step = Math.max(MIN_STEP, Math.min(cardWidth * 0.5, (available - gaps - cardWidth) / Math.max(1, widest - 1)));
 
   const cardEl = ({ id, groupStart }, i) => {
@@ -639,22 +678,32 @@ setupHandGestures();
 
 // Tappable plays above the hand: what beats the last play, or, after tapping a card,
 // the plays that use that card.
+// My own seat info, shown in the dock in landscape (where my seat is not drawn on the felt).
+function myInfoHtml(v) {
+  if (!isLandscape() || !v.you) return '';
+  const me = v.players[v.you.seat];
+  const place = me.place ? `<b class="place">${me.place === 1 ? '头游' : `第 ${me.place}`}</b>` : '';
+  return `<span class="my-info">${esc(me.name.replace(/\(机器人\)$/, ''))} ${me.cards ?? 0} 张 <span class="pts">${me.captured} 分</span>${place}</span>`;
+}
+
 function renderQuickPicks(v) {
   const el = $('quickPicks');
   const myTurn = v.phase === 'playing' && v.turn === v.you?.seat;
   if (!myTurn || !v.you.hand.length) {
-    el.hidden = true;
     state.picks = [];
+    const info = myInfoHtml(v);
+    el.hidden = !info;
+    el.innerHTML = info;
     return;
   }
   const focus = state.focusCard && state.selected.has(state.focusCard) ? state.focusCard : null;
   state.picks = quickPicks(v.you.hand, currentTop(), v.decks, focus);
   const chosen = [...state.selected].sort().join();
   el.hidden = false;
-  el.innerHTML = state.picks.length
+  el.innerHTML = myInfoHtml(v) + (state.picks.length
     ? `<span class="picks-label">${focus ? '含这张' : v.trick ? '能压' : '可出'}</span>${state.picks.map((p, i) => `
         <button type="button" class="pick ${p.combo.cat ? 'special' : ''} ${[...p.cards].sort().join() === chosen ? 'on' : ''}" data-pick="${i}">${esc(comboLabel(p.combo))}</button>`).join('')}`
-    : `<span class="picks-label">${focus ? '这张牌没有能出的组合' : '要不起'}</span>`;
+    : `<span class="picks-label">${focus ? '这张牌没有能出的组合' : '要不起'}</span>`);
 }
 
 function renderActions(v) {
@@ -924,32 +973,76 @@ if (roomFromUrl) {
 render();
 
 // ---- landscape --------------------------------------------------------------------
-// Phones held sideways get the compact landscape layout. The 横屏 button asks the browser to go
-// fullscreen and lock landscape; where that is not allowed (iOS Safari) the page rotates itself.
+// Phones held sideways get the compact landscape layout. Going fullscreen needs a user gesture, so
+// in landscape the first tap anywhere enters fullscreen (and locks landscape where allowed). iOS
+// Safari has no fullscreen for pages: it gets a one-time tip to add the game to the home screen.
+// The 横屏 button also works with the phone upright: where orientation cannot be locked the page
+// rotates itself.
+
+const fullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+const canFullscreen = () => Boolean(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
+const isStandalone = () => window.matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches || navigator.standalone === true;
+
+async function enterFullscreen() {
+  const el = document.documentElement;
+  const request = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (!request || fullscreenElement()) return;
+  await request.call(el, { navigationUI: 'hide' });
+  try { await screen.orientation?.lock?.('landscape'); } catch { /* lock not allowed here */ }
+}
+
+async function leaveFullscreen() {
+  try { screen.orientation?.unlock?.(); } catch { /* nothing locked */ }
+  const exit = document.exitFullscreen || document.webkitExitFullscreen;
+  if (fullscreenElement() && exit) await exit.call(document);
+}
+
+let fullscreenArmed = false;
+function armFullscreenOnTap() {
+  if (fullscreenArmed || fullscreenElement() || !canFullscreen() || isStandalone()) return;
+  fullscreenArmed = true;
+  const go = () => {
+    document.removeEventListener('click', go, true);
+    document.removeEventListener('touchend', go, true);
+    fullscreenArmed = false;
+    if (isLandscape()) enterFullscreen().catch(() => { /* the browser said no; keep playing windowed */ });
+  };
+  document.addEventListener('click', go, true);
+  document.addEventListener('touchend', go, true);
+  toast('轻触屏幕进入全屏', 'ok');
+}
 
 function applyOrientation() {
+  const root = document.documentElement;
+  // Real pixel sizes for layout: dvh/dvw units are missing in older Chromium-based phone browsers.
+  root.style.setProperty('--vw', `${window.innerWidth}px`);
+  root.style.setProperty('--vh', `${window.innerHeight}px`);
   const portrait = window.innerHeight > window.innerWidth;
   const rotated = IS_TOUCH && state.forceLandscape && portrait;
-  const root = document.documentElement;
+  const landscape = rotated || (!portrait && window.innerHeight <= LANDSCAPE_MAX_HEIGHT);
+  const changed = root.classList.contains('landscape') !== landscape;
   root.classList.toggle('rotated', rotated);
-  root.classList.toggle('landscape', rotated || (!portrait && window.innerHeight <= LANDSCAPE_MAX_HEIGHT));
+  root.classList.toggle('landscape', landscape);
   const btn = $('rotateBtn');
   btn.hidden = !IS_TOUCH || (!portrait && !state.forceLandscape);
   btn.textContent = state.forceLandscape ? '竖屏' : '横屏';
+  if (IS_TOUCH && landscape && !rotated) {
+    if (canFullscreen()) armFullscreenOnTap();
+    else if (!isStandalone() && !readSession('iosTip')) {
+      writeSession('iosTip', '1');
+      toast('想要全屏：点分享按钮，选"添加到主屏幕"，从主屏幕打开', 'ok');
+    }
+  }
   if (state.view && state.view.phase !== 'lobby') renderTable(state.view);
+  else if (changed) render();
 }
 
 async function toggleLandscape() {
   state.forceLandscape = !state.forceLandscape;
   writePref('forceLandscape', state.forceLandscape ? '1' : '0');
   try {
-    if (state.forceLandscape) {
-      await document.documentElement.requestFullscreen?.();
-      await screen.orientation?.lock?.('landscape');
-    } else {
-      screen.orientation?.unlock?.();
-      if (document.fullscreenElement) await document.exitFullscreen();
-    }
+    if (state.forceLandscape) await enterFullscreen();
+    else await leaveFullscreen();
   } catch {
     // Not supported (e.g. iOS Safari): applyOrientation rotates the page instead.
   }
@@ -957,5 +1050,7 @@ async function toggleLandscape() {
 }
 
 window.addEventListener('resize', applyOrientation);
-window.addEventListener('orientationchange', applyOrientation);
+window.addEventListener('orientationchange', () => setTimeout(applyOrientation, 150));
+document.addEventListener('fullscreenchange', applyOrientation);
+document.addEventListener('webkitfullscreenchange', applyOrientation);
 applyOrientation();

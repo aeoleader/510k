@@ -1,4 +1,4 @@
-import { deal, teamsFor, createRng } from './cards.js';
+import { deal, teamsFor, createRng, clone } from './cards.js';
 import { settleHand, tributePairs, applyTribute, applyReturn } from './tribute.js';
 
 export const HANDS_PER_MATCH = 10;
@@ -67,7 +67,7 @@ export function completeReturns(prepared, returns) {
 // Fold a finished hand (final game state) into the match. Returns { match, result }.
 export function recordHand(match, { ranking, finished, captured }) {
   const result = settleHand({ teams: match.teams, captured, ranking, finished });
-  const next = structuredClone(match);
+  const next = clone(match);
   result.score.forEach((points, side) => { next.totals[side] += points; });
   next.heads[ranking[0]] += 1;
   next.tails[ranking[ranking.length - 1]] += 1;

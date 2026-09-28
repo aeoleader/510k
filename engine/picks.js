@@ -1,4 +1,4 @@
-import { valueOf, isJoker, compareCards } from './cards.js';
+import { valueOf, isJoker, compareCards, last } from './cards.js';
 import { identify, beats } from './combos.js';
 import { hints } from './hint.js';
 
@@ -10,7 +10,7 @@ const rankLabel = (id) => (isJoker(id) ? (id[0] === 'B' ? '大王' : '小王') :
 export function comboLabel(combo) {
   const cards = [...combo.cards].sort(compareCards);
   const low = rankLabel(cards[0]);
-  const high = rankLabel(cards.at(-1));
+  const high = rankLabel(last(cards));
   switch (combo.type) {
     case 'single': return high;
     case 'pair': return `对${high}`;

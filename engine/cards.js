@@ -8,6 +8,10 @@ export const SUIT_ORDER = { S: 4, H: 3, C: 2, D: 1, J: 0 };
 const RANK_VALUE = { L: 16, B: 17 };
 RANKS.forEach((r, i) => { RANK_VALUE[r] = i + 3; });
 
+// Helpers for code that also runs in older phone browsers (Array#at and structuredClone arrived in 2022).
+export const last = (list) => list[list.length - 1];
+export const clone = (value) => (typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value)));
+
 export const MIN_PLAYERS = 4;
 export const MAX_PLAYERS = 8;
 export const MIN_DECKS = 2;

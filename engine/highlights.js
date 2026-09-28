@@ -1,4 +1,4 @@
-import { sumPoints } from './cards.js';
+import { sumPoints, last } from './cards.js';
 
 const BIG_BOMB_LEVEL = 6;
 const BIG_TRICK_PER_DECK = 15;
@@ -16,7 +16,7 @@ export function findHighlights({ events, teams, decks, sweep = false, resisted =
 
   for (const e of events) {
     if (e.type === 'play') {
-      const prev = plays.at(-1);
+      const prev = last(plays);
       const special = e.combo.cat >= 1;
       if (e.combo.type === 'joker_bomb' || (e.combo.type === 'bomb' && e.combo.level >= BIG_BOMB_LEVEL)) {
         mark(e.seq, 'big_bomb', [e.seat]);
