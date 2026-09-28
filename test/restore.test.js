@@ -120,6 +120,7 @@ test('grace: an offline human is not auto-played right after a restore, and is o
   const { room: copy, clock: c } = restart(room);
   assert.equal(copy.online.size, 0);
   assert.equal(copy.hand.turn, 0);
+  assert.equal(copy.reclaimable(copy.players[0]), false, 'offline times restart at the restore: nobody takes the seat by name yet');
   assert.equal(copy.deadline, c.now() + left + GRACE, 'what was left of the turn, plus the grace');
   const played = copy.actions.length;
   c.advance(GRACE - 1);
@@ -202,8 +203,9 @@ test('dealing without a claim: revealed rounds and bot claim times carry over', 
 test('dealing with a claim: the claim stands and the deal finishes with that leader', () => {
   const { room, clock, host, people } = setup({ dealMode: true });
   room.start(host.id);
-  const holder = room.dealing.order.findIndex((cards) => cards.some((c) => c.startsWith('3S')));
-  const at = room.dealing.order[holder].findIndex((c) => c.startsWith('3S'));
+  const [holder, at] = room.dealing.order.map((cards, seat) => [seat, cards.findIndex((c) => c.startsWith('3S'))])
+    .filter(([, i]) => i >= 0).sort((a, b) => a[1] - b[1])[0] ?? [-1, -1];
+  if (at < 0 || at + 1 >= room.dealing.total) return room.destroy(); // no black 3 dealt early enough to claim mid-deal
   clock.advance((at + 1) * DELAYS.dealRoundMs);
   room.claimThree(people[holder].id);
   const rounds = room.dealRounds();
