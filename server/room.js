@@ -4,6 +4,7 @@ import { createHandState, apply, ranking, GameError } from '../engine/game.js';
 import { createMatch, prepareHand, completeReturns, recordHand, isMatchOver, HANDS_PER_MATCH } from '../engine/match.js';
 import { botAction } from '../engine/bot.js';
 import { computeRatingDeltas } from '../engine/rating.js';
+import { findHighlights } from '../engine/highlights.js';
 import { smallestSingle } from '../engine/hint.js';
 import { lowestCard } from '../engine/tribute.js';
 import { HttpError } from './http.js';
@@ -32,6 +33,9 @@ export class Room {
     this.onMatchOver = onMatchOver;
     this.startedAt = null;
     this.ratingResult = null;
+    this.handLog = []; // one entry per finished hand of the current match, for replays
+    this.handRecord = null;
+    this.matchId = null; // set once the finished match is stored
     this.players = [];
     this.hostId = null;
     this.decks = null; // null = default for the player count
@@ -171,6 +175,8 @@ export class Room {
     if (this.players.length < MIN_PLAYERS) throw new HttpError(409, 'not_enough_players');
     this.startedAt = this.now();
     this.ratingResult = null;
+    this.handLog = [];
+    this.matchId = null;
     this.ratingsBefore = this.players.map((p) => (p.userId ? this.accountView(p.userId)?.rating ?? null : null));
     for (const p of this.players) p.leftEarly = false;
     this.match = createMatch({
@@ -242,6 +248,19 @@ export class Room {
     this.hand = createHandState({
       hands, teams: this.match.teams, leader: this.prepared.leader, decks: this.match.decks,
     });
+    const { handNo, seed, leader, dealt, leftover, tribute } = this.prepared;
+    this.handRecord = {
+      handNo,
+      seed,
+      leader,
+      tribute: {
+        dealt, leftover, pairs: tribute.pairs, resisted: tribute.resisted, given: tribute.given,
+        returns: this.returns.map(({ from, to, card }) => ({ from, to, card })),
+      },
+      initialHands: hands.map((h) => [...h]),
+      actions: [],
+      lastAt: this.now(),
+    };
     this.actions = [];
     this.events = [];
     this.phase = 'playing';
@@ -276,6 +295,12 @@ export class Room {
     }
     this.hand = result.state;
     this.actions.push(action);
+    const at = this.now();
+    this.handRecord.actions.push({
+      seat: action.seat, type: action.type, cards: action.cards ?? null, auto: Boolean(action.auto),
+      combo: result.events.find((e) => e.type === 'play')?.combo.type ?? null, elapsedMs: at - this.handRecord.lastAt,
+    });
+    this.handRecord.lastAt = at;
     this.events.push(...result.events);
     for (const e of result.events) this.onEvent(e);
     if (this.hand.over) this.finishHand();
@@ -304,6 +329,16 @@ export class Room {
     });
     this.match = match;
     this.result = { handNo: match.handNo, ranking: ranking(this.hand), captured: this.hand.captured, ...result };
+    const { lastAt, ...record } = this.handRecord;
+    this.handLog.push({
+      ...record,
+      result: { ranking: this.result.ranking, finished: this.hand.finished, captured: this.hand.captured,
+        score: result.score, penalties: result.penalties, winner: result.winner, sweep: result.sweep },
+      highlights: findHighlights({
+        events: this.events, teams: this.match.teams, decks: this.match.decks,
+        sweep: result.sweep, resisted: this.prepared.tribute.resisted,
+      }),
+    });
     if (result.sweep) this.say('完胜！');
     this.phase = isMatchOver(match) ? 'match_over' : 'hand_over';
     if (this.phase === 'match_over') {
@@ -394,7 +429,8 @@ export class Room {
         opponentMinCards: Math.min(...opponents.map((h) => h.length)),
       });
     }
-    this.act({ seat, ...choice, auto: true });
+    // `auto` marks a human seat played by the server (timeout, offline, left); bots just play.
+    this.act({ seat, ...choice, auto: !this.players[seat].isBot });
   }
 
   setDeadline(ms) {
@@ -496,6 +532,7 @@ export class Room {
         leftEarly: p.leftEarly,
       })),
       ratings: this.phase === 'match_over' ? this.ratingResult : null,
+      matchId: this.phase === 'match_over' ? this.matchId : null,
       turn: this.phase === 'playing' ? this.hand.turn : -1,
       deadline: this.deadline,
       deadlineSpan: this.deadlineSpan,

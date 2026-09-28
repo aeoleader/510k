@@ -7,6 +7,7 @@ import { openDatabase } from '../server/db.js';
 import { Accounts } from '../server/accounts.js';
 import { hints } from '../engine/hint.js';
 import { identify } from '../engine/combos.js';
+import { createHandState, replay, ranking } from '../engine/game.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FAST = { turnMs: 2000, returnMs: 2000, botMs: 1, nextHandMs: 1 };
@@ -186,5 +187,29 @@ test('accounts: a full rated match updates the rating and records the match', as
   const rows = accounts.db.prepare('SELECT user_id, rating_delta FROM match_players WHERE user_id IS NOT NULL').all();
   assert.equal(rows.length, 1);
   assert.equal(rows[0].rating_delta, mine.delta);
+  assert.ok(Number.isInteger(view.matchId), 'the finished view links to the stored match');
+
+  // The stored hands replay through the engine to exactly the recorded results.
+  assert.equal((await post('/api/matches/replay', { matchId: view.matchId }, 401)).error, 'login_required');
+  const replayData = await post('/api/matches/replay', { accountToken, matchId: view.matchId });
+  assert.equal(replayData.hands.length, 10);
+  assert.deepEqual(replayData.totals, view.totals);
+  for (const h of replayData.hands) {
+    const initial = createHandState({ hands: h.initialHands, teams: replayData.teams, leader: h.leader, decks: replayData.decks });
+    const { state } = replay(initial, h.actions.map(({ seat, type, cards }) => ({ seat, type, cards })));
+    assert.deepEqual(state.captured, h.result.captured, `hand ${h.handNo} captured`);
+    assert.deepEqual(ranking(state), h.result.ranking, `hand ${h.handNo} ranking`);
+  }
+
+  const profile = await post('/api/users/profile', { accountToken, username: 'me' });
+  assert.equal(profile.account.username, 'Rated');
+  assert.equal(profile.totals.matches, 1);
+  assert.equal(profile.totals.hands, 10);
+  assert.equal(profile.recent[0].matchId, view.matchId);
+  assert.equal(profile.recent[0].hands.length, 10);
+  assert.equal(profile.history.at(-1).after, mine.after);
+  assert.equal((await post('/api/users/profile', { accountToken, username: 'nobody' }, 404)).error, 'no_user');
+  assert.equal((await fetch(`${base}/replay/${view.matchId}`)).status, 200);
+  assert.equal((await fetch(`${base}/u/Rated`)).status, 200);
   await post('/api/rooms/leave', { code, token });
 });

@@ -6,6 +6,7 @@ import { HttpError, sendJson, sendError, readJson } from './http.js';
 import { parseCards, parseCard, parseName, parseCode, parseDecks, parseToken } from './validate.js';
 import { publicAccount } from './accounts.js';
 import { RateLimiter } from './limiter.js';
+import { Stats } from './stats.js';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -54,6 +55,7 @@ function roomPayload(room, player) {
 // accounts: an Accounts instance, or null to run guest-only (no login, no ratings).
 export function createApp({ publicDir, engineDir, delays, timers, now, accounts = null } = {}) {
   const hub = new Hub({ delays, timers, now, accounts });
+  const stats = accounts ? new Stats(accounts.db) : null;
   // Password guessing and room spam are bounded per client IP (and per username for logins).
   const limits = {
     login: new RateLimiter({ limit: 10, windowMs: 60_000, now }),
@@ -91,6 +93,19 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
     '/api/auth/logout': (body) => {
       requireAccounts().logout(body.accountToken);
       return { ok: true };
+    },
+    // Replays and profiles are for signed-in players (spec 5.2).
+    '/api/matches/replay': (body) => {
+      requireAccounts();
+      if (!userFor(body)) throw new HttpError(401, 'login_required');
+      return stats.replay(Number(body.matchId));
+    },
+    '/api/users/profile': (body) => {
+      requireAccounts();
+      const me = userFor(body);
+      if (!me) throw new HttpError(401, 'login_required');
+      const name = body.username === undefined || body.username === 'me' ? me.username : String(body.username);
+      return stats.profile(name);
     },
     '/api/rooms/create': (body, ip) => {
       limits.rooms.hit(ip);
@@ -146,6 +161,9 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
       if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
       if (req.method !== 'GET' && req.method !== 'HEAD') return sendError(res, 405, 'method_not_allowed');
       if (url.pathname.startsWith('/engine/')) return serveFile(res, engineRoot, url.pathname.slice('/engine'.length));
+      // Pretty URLs for shareable pages; the page script reads the id / name from the path.
+      if (/^\/replay\/\d+$/.test(url.pathname)) return serveFile(res, publicRoot, '/replay.html');
+      if (/^\/u\/[^/]+$/.test(url.pathname)) return serveFile(res, publicRoot, '/profile.html');
       const pathname = url.pathname === '/' ? '/index.html' : url.pathname;
       return serveFile(res, publicRoot, pathname);
     } catch (err) {

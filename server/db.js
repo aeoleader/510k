@@ -44,6 +44,38 @@ const MIGRATIONS = [
      PRIMARY KEY (match_id, seat)
    );
    CREATE INDEX match_players_user ON match_players(user_id);`,
+  // Replays: each hand's starting position and every action, plus key-moment tags.
+  `CREATE TABLE hands (
+     id INTEGER PRIMARY KEY,
+     match_id INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+     hand_no INTEGER NOT NULL,
+     seed INTEGER NOT NULL,
+     leader INTEGER NOT NULL,
+     initial_hands TEXT NOT NULL,
+     tribute TEXT NOT NULL,
+     result TEXT NOT NULL,
+     UNIQUE (match_id, hand_no)
+   );
+   CREATE TABLE hand_events (
+     hand_id INTEGER NOT NULL REFERENCES hands(id) ON DELETE CASCADE,
+     seq INTEGER NOT NULL,
+     seat INTEGER NOT NULL,
+     type TEXT NOT NULL,
+     cards TEXT,
+     combo_type TEXT,
+     elapsed_ms INTEGER NOT NULL,
+     auto INTEGER NOT NULL,
+     PRIMARY KEY (hand_id, seq)
+   );
+   CREATE TABLE highlights (
+     hand_id INTEGER NOT NULL REFERENCES hands(id) ON DELETE CASCADE,
+     event_seq INTEGER NOT NULL,
+     tag TEXT NOT NULL,
+     seats TEXT NOT NULL,
+     points INTEGER NOT NULL
+   );
+   CREATE INDEX highlights_hand ON highlights(hand_id);
+   CREATE INDEX matches_ended ON matches(ended_at);`,
 ];
 
 export function openDatabase(file) {

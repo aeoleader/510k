@@ -2,15 +2,11 @@ import { hints } from '/engine/hint.js';
 import { identify, beats } from '/engine/combos.js';
 import { sortBySize, sortBy510k, bombValues } from '/engine/sort.js';
 import { valueOf, isJoker } from '/engine/cards.js';
-import { TIER_ICONS } from '/vendor/tier-icons.js';
+import {
+  TYPE_LABEL, esc, initial, cardHtml as baseCardHtml, badgeHtml, fanHtml,
+} from '/ui.js';
 import { Effects } from '/effects.js';
 
-const SUIT_SYMBOL = { S: '♠', H: '♥', C: '♣', D: '♦' };
-const RANK_LABEL = { T: '10' };
-const TYPE_LABEL = {
-  single: '单张', pair: '对子', triple: '三张', triple_pair: '三带一对', straight: '顺子', pairs: '连对',
-  x510k: '杂 510K', p510k: '纯 510K', bomb: '炸弹', joker_bomb: '王炸',
-};
 const ERROR_TEXT = {
   bad_name: '请输入 1 到 12 个字的昵称', bad_code: '房间码是 4 位', no_room: '房间不存在', room_full: '房间已满',
   in_progress: '对局进行中，无法加入', not_enough_players: '至少需要 4 名玩家', host_only: '只有房主可以操作',
@@ -21,11 +17,9 @@ const ERROR_TEXT = {
   short_password: '密码至少 6 位', too_many_attempts: '操作太频繁，请稍后再试', too_many_rooms: '你开的房间太多了，先关掉一些',
   server_busy: '服务器繁忙，请稍后再试', left_match: '你已离开本轮，由机器人托管到本轮结束',
 };
-const TIER_ICON = { 1: 'shield', 2: 'shield', 3: 'medal', 4: 'award', 5: 'gem', 6: 'crown' };
 const MAX_SEATS = 8;
 
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 const state = {
   code: null,
@@ -165,7 +159,6 @@ function openEvents() {
 const playerAt = (seat) => state.view.players[seat];
 const teamOf = (seat) => (state.view.teams ? state.view.teams[seat] : null);
 const teamColor = (seat) => (teamOf(seat) === null ? '' : `--team-color: var(--team-${teamOf(seat)});`);
-const initial = (name) => [...name.replace(/\(机器人\)$/, '')][0] ?? '?';
 
 function timeLeft() {
   const v = state.view;
@@ -192,42 +185,10 @@ function currentHints() {
 
 // ---- markup helpers ------------------------------------------------------------------
 
-function cardHtml(id, { size = '', selectable = false, bomb = false } = {}) {
-  const cls = ['card'];
-  if (size) cls.push(size);
-  if (bomb) cls.push('bomb');
-  let inner;
-  if (isJoker(id)) {
-    const big = id[0] === 'B';
-    cls.push('joker', big ? 'big-j' : 'small-j');
-    inner = `<span class="idx"><span class="r">${big ? '大王' : '小王'}</span></span><span class="big">J</span>`;
-  } else {
-    if (id[1] === 'H' || id[1] === 'D') cls.push('red');
-    const r = RANK_LABEL[id[0]] ?? id[0];
-    inner = `<span class="idx"><span class="r">${r}</span><span class="s">${SUIT_SYMBOL[id[1]]}</span></span><span class="big">${SUIT_SYMBOL[id[1]]}</span>`;
-  }
-  const label = isJoker(id) ? (id[0] === 'B' ? '大王' : '小王') : `${SUIT_SYMBOL[id[1]]}${RANK_LABEL[id[0]] ?? id[0]}`;
-  if (selectable) {
-    if (state.selected.has(id)) cls.push('selected');
-    return `<button type="button" class="${cls.join(' ')}" data-card="${id}" aria-label="${label}" aria-pressed="${state.selected.has(id)}">${inner}</button>`;
-  }
-  return `<div class="${cls.join(' ')}" aria-label="${label}">${inner}</div>`;
-}
 
-// Tier badge ported from card-game: richer effects at higher tiers, stars show progress.
-function badgeHtml(account, { compact = false } = {}) {
-  if (!account) return '';
-  const tier = account.tier;
-  const stars = account.maxStars === null
-    ? (account.stars ? `<span class="tier-stars">★×${account.stars}</span>` : '')
-    : `<span class="tier-stars">${'★'.repeat(account.stars)}<i>${'☆'.repeat(account.maxStars - account.stars)}</i></span>`;
-  const icon = TIER_ICON[tier] ? TIER_ICONS[TIER_ICON[tier]] : '';
-  return `<span class="tier-badge tier-${tier} ${compact ? 'compact' : ''}" title="${esc(`${account.tierName} ${account.stars} 星，${account.rating} 分`)}">
-    ${tier >= 4 ? '<span class="tier-shine"></span>' : ''}${tier === 6 ? '<span class="tier-sparkles"><i></i><i></i><i></i><i></i></span>' : ''}
-    ${icon}${esc(account.tierName)}${stars}</span>`;
-}
 
-const fanHtml = (cards, size) => `<div class="fan">${cards.map((c) => cardHtml(c, { size })).join('')}</div>`;
+
+const cardHtml = (id, opts = {}) => baseCardHtml(id, { ...opts, selected: state.selected.has(id) });
 
 function avatarHtml(p, sizeVar = '') {
   return `<span class="avatar ${p.isBot ? 'bot' : ''}" style="${teamColor(p.seat)}${sizeVar}">${esc(initial(p.name))}</span>`;
@@ -265,7 +226,9 @@ function render() {
 function renderAccountChip() {
   const chip = $('accountChip');
   chip.hidden = !state.account;
-  if (state.account) chip.innerHTML = `<span class="chip-name">${esc(state.account.username)}</span>${badgeHtml(state.account, { compact: true })}`;
+  if (state.account) {
+    chip.innerHTML = `<a class="chip-link" href="/u/${encodeURIComponent(state.account.username)}" target="_blank" rel="noopener" title="我的战绩"><span class="chip-name">${esc(state.account.username)}</span>${badgeHtml(state.account, { compact: true })}</a>`;
+  }
 }
 
 function renderEntry() {
@@ -657,6 +620,7 @@ function resultDialog(v) {
       ${penalties ? `<div class="penalty">${penalties}</div>` : ''}
       ${ratingLine}
       <div class="actions">
+        ${over && v.matchId && state.account ? `<a class="btn" href="/replay/${v.matchId}" target="_blank" rel="noopener">看回放</a>` : ''}
         ${over
           ? (v.you?.isHost ? '<button id="restartBtn" class="btn btn-primary">回到大厅</button>' : '<span class="note">等待房主操作</span>')
           : `<span class="note">下一局 <span data-secs></span> 秒后开始</span>${v.you?.isHost ? '<button id="nextBtn" class="btn btn-primary">马上开始</button>' : ''}`}

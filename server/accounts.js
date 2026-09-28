@@ -64,6 +64,11 @@ export class Accounts {
       addRating: db.prepare('UPDATE users SET rating = rating + ? WHERE id = ?'),
       insertMatch: db.prepare(`INSERT INTO matches (room_code, player_count, decks, mode, started_at, ended_at, final_scores)
                                VALUES (?, ?, ?, ?, ?, ?, ?)`),
+      insertHand: db.prepare(`INSERT INTO hands (match_id, hand_no, seed, leader, initial_hands, tribute, result)
+                               VALUES (?, ?, ?, ?, ?, ?, ?)`),
+      insertAction: db.prepare(`INSERT INTO hand_events (hand_id, seq, seat, type, cards, combo_type, elapsed_ms, auto)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`),
+      insertHighlight: db.prepare('INSERT INTO highlights (hand_id, event_seq, tag, seats, points) VALUES (?, ?, ?, ?, ?)'),
       insertMatchPlayer: db.prepare(`INSERT INTO match_players (match_id, seat, user_id, display_name, is_bot, team, total_score,
                                      heads, tails, rating_before, rating_delta, left_early) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
     };
@@ -116,8 +121,8 @@ export class Accounts {
     return this.q.byId.get(id) ?? null;
   }
 
-  // Persist one finished match and every rated player's new rating, atomically.
-  recordMatch({ roomCode, playerCount, decks, mode, startedAt, endedAt, totals, players }) {
+  // Persist one finished match (players, every hand for replays) and each rated player's new rating, atomically.
+  recordMatch({ roomCode, playerCount, decks, mode, startedAt, endedAt, totals, players, hands = [] }) {
     return transaction(this.db, () => {
       const { lastInsertRowid } = this.q.insertMatch.run(roomCode, playerCount, decks, mode, startedAt, endedAt, JSON.stringify(totals));
       const matchId = Number(lastInsertRowid);
@@ -126,6 +131,16 @@ export class Accounts {
           p.total, p.heads, p.tails, p.ratingBefore ?? null, p.delta ?? null, p.leftEarly ? 1 : 0);
         // Add the delta to the stored rating (not before + delta), so overlapping matches cannot overwrite each other.
         if (p.userId && Number.isInteger(p.delta)) this.q.addRating.run(p.delta, p.userId);
+      }
+      for (const h of hands) {
+        const { lastInsertRowid: handRow } = this.q.insertHand.run(matchId, h.handNo, h.seed, h.leader,
+          JSON.stringify(h.initialHands), JSON.stringify(h.tribute), JSON.stringify(h.result));
+        const handId = Number(handRow);
+        h.actions.forEach((a, seq) => this.q.insertAction.run(handId, seq, a.seat, a.type,
+          a.cards ? JSON.stringify(a.cards) : null, a.combo, a.elapsedMs, a.auto ? 1 : 0));
+        for (const hl of h.highlights) {
+          this.q.insertHighlight.run(handId, hl.eventSeq, hl.tag, JSON.stringify(hl.seats), hl.points);
+        }
       }
       return matchId;
     });

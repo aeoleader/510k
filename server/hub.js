@@ -63,7 +63,7 @@ export class Hub {
     if (!this.accounts) return;
     for (const p of room.players) if (p.userId) this.accountCache.delete(p.userId);
     const { match } = room;
-    this.accounts.recordMatch({
+    room.matchId = this.accounts.recordMatch({
       roomCode: room.code,
       playerCount: match.playerCount,
       decks: match.decks,
@@ -84,6 +84,7 @@ export class Hub {
         delta: room.ratingResult[seat].delta,
         leftEarly: p.leftEarly,
       })),
+      hands: room.handLog,
     });
   }
 
