@@ -102,6 +102,7 @@ test('连三: three or more consecutive triples, nothing attached, up to K', () 
   assert.equal(type(t(['5', '6', '7'])), 'triples');
   assert.equal(type(t(['5', '6', '7', '8'])), 'triples');
   assert.equal(type(t(['5', '6'])), null, 'two triples stay illegal');
+  assert.equal(type(t(['J', 'Q', 'K'])), 'triples', 'J-Q-K is the highest run');
   assert.equal(type(t(['Q', 'K', 'A'])), null, 'past K');
   assert.equal(type(t(['5', '6', '8'])), null, 'not consecutive');
   assert.equal(type([...t(['5', '6', '7']), '9S0']), null, 'nothing attached');

@@ -47,6 +47,7 @@ function runs(groups, need, minLen, exactLen) {
       if (len >= exactLen) out.push(start);
     } else if ((groups.get(start - 1)?.length ?? 0) < need) {
       out.push([start, len]); // maximal run starting here
+      if (need >= 2) out.push(...bombFreeRuns(groups, start, len, minLen));
     }
   }
   return out.map((r) => {
@@ -55,6 +56,20 @@ function runs(groups, need, minLen, exactLen) {
     for (let v = start; v < start + len; v++) cards.push(...groups.get(v).slice(0, need));
     return cards;
   });
+}
+
+// Pieces of the run [start, start + len) that leave every bomb (4+ of a value) intact,
+// e.g. 333 444 555 6666 also offers 333 444 555 as 连三.
+function bombFreeRuns(groups, start, len, minLen) {
+  const out = [];
+  let from = start;
+  for (let v = start; v <= start + len; v++) {
+    if (v < start + len && groups.get(v).length < 4) continue;
+    const piece = v - from;
+    if (piece >= minLen && piece < len) out.push([from, piece]);
+    from = v + 1;
+  }
+  return out;
 }
 
 function sameKind(groups, k) {

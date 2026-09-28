@@ -94,3 +94,16 @@ test('follow 连三: a higher run of the same length, and leads offer it', () =>
   assert.equal(list[0].length, 9);
   assert.ok(hints(hand, null).some((h) => h.combo.type === 'triples'));
 });
+
+test('leading 连三 / 连对: also offers the run that keeps a bomb whole', () => {
+  const t = (v) => [`${v}S0`, `${v}H0`, `${v}D0`];
+  const hand = [...t('3'), ...t('4'), ...t('5'), ...t('6'), '6C0'];
+  const list = hints(hand, null);
+  const run35 = list.find((h) => h.combo.type === 'triples' && h.cards.length === 9);
+  assert.ok(run35, '333 444 555 is offered');
+  assert.ok(run35.cards.every((c) => c[0] !== '6'), 'the 6666 bomb stays whole');
+  assert.ok(list.findIndex((h) => h === run35) < list.findIndex((h) => h.combo.type === 'triples' && h.cards.length === 12),
+    'offered before the run that breaks the bomb');
+  const pairs = hints(['3S0', '3H0', '4S0', '4H0', '5S0', '5H0', '6S0', '6H0', '6D0', '6C0'], null);
+  assert.ok(pairs.some((h) => h.combo.type === 'pairs' && h.cards.length === 6 && h.cards.every((c) => c[0] !== '6')));
+});

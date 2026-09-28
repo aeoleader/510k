@@ -8,6 +8,7 @@ import { Accounts } from '../server/accounts.js';
 import { hints } from '../engine/hint.js';
 import { identify } from '../engine/combos.js';
 import { createHandState, replay, ranking } from '../engine/game.js';
+import { displayOrder } from '../engine/sort.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FAST = { turnMs: 2000, returnMs: 2000, botMs: 1, nextHandMs: 1, tributeMs: 1, returnRevealMs: 1 };
@@ -46,7 +47,7 @@ async function listen(code, token) {
   streams.push(controller);
   const res = await fetch(`${base}/api/events?room=${code}&token=${token}`, { signal: controller.signal });
   assert.equal(res.status, 200);
-  const holder = { view: null, count: 0 };
+  const holder = { view: null, count: 0, unordered: [] }; // unordered: played cards not in display order
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -63,6 +64,8 @@ async function listen(code, token) {
           if (chunk.startsWith('data: ')) {
             holder.view = JSON.parse(chunk.slice(6));
             holder.count += 1;
+            const shown = [holder.view.trick?.cards, ...Object.values(holder.view.seatActions ?? {}).map((a) => a.cards)];
+            for (const cards of shown) if (cards && cards.join() !== displayOrder(cards).join()) holder.unordered.push(cards);
           }
         }
       }
@@ -131,6 +134,39 @@ test('pause, resume and dealing mode over HTTP', async () => {
   await post('/api/rooms/resume', { code: host.code, token: host.token });
   await until(() => view.view.paused === false);
   await post('/api/rooms/leave', { code: guest.code, token: guest.token });
+  await post('/api/rooms/leave', { code: host.code, token: host.token });
+});
+
+test('rejoining with the token of a seat that left mid-match takes it back from auto-play', async () => {
+  const host = await post('/api/rooms/create', { name: '甲' });
+  const guest = await post('/api/rooms/join', { code: host.code, name: '乙' });
+  await listen(host.code, host.token);
+  await listen(host.code, guest.token);
+  for (let i = 0; i < 2; i++) await post('/api/rooms/add-bot', { code: host.code, token: host.token });
+  await post('/api/rooms/start', { code: host.code, token: host.token });
+  await post('/api/rooms/leave', { code: guest.code, token: guest.token });
+  assert.equal((await post('/api/rooms/pass', { code: guest.code, token: guest.token }, 409)).error, 'left_match');
+  const back = await post('/api/rooms/join', { code: guest.code, token: guest.token });
+  assert.equal(back.playerId, guest.playerId);
+  assert.equal(back.token, guest.token);
+  const res = await fetch(`${base}/api/rooms/pass`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: guest.code, token: guest.token }),
+  });
+  assert.notEqual((await res.json()).error, 'left_match', 'their own actions are accepted again');
+  await post('/api/rooms/leave', { code: guest.code, token: guest.token });
+  await post('/api/rooms/leave', { code: host.code, token: host.token });
+});
+
+test('pause and resume are rate limited per player', async () => {
+  const host = await post('/api/rooms/create', { name: '甲' });
+  await listen(host.code, host.token);
+  for (let i = 0; i < 3; i++) await post('/api/rooms/add-bot', { code: host.code, token: host.token });
+  await post('/api/rooms/start', { code: host.code, token: host.token });
+  for (let i = 0; i < 6; i++) {
+    await post('/api/rooms/pause', { code: host.code, token: host.token });
+    await post('/api/rooms/resume', { code: host.code, token: host.token });
+  }
+  assert.equal((await post('/api/rooms/pause', { code: host.code, token: host.token }, 429)).error, 'too_many_attempts');
   await post('/api/rooms/leave', { code: host.code, token: host.token });
 });
 
@@ -229,7 +265,9 @@ test('accounts: a full rated match updates the rating and records the match', as
   const replayData = await post('/api/matches/replay', { accountToken, matchId: view.matchId });
   assert.equal(replayData.hands.length, 10);
   assert.deepEqual(replayData.totals, view.totals);
+  assert.deepEqual(me.unordered, [], 'the table always shows played cards in display order');
   for (const h of replayData.hands) {
+    for (const a of h.actions) if (a.cards) assert.deepEqual(a.cards, displayOrder(a.cards), 'replays store display order');
     const initial = createHandState({ hands: h.initialHands, teams: replayData.teams, leader: h.leader, decks: replayData.decks });
     const { state } = replay(initial, h.actions.map(({ seat, type, cards }) => ({ seat, type, cards })));
     assert.deepEqual(state.captured, h.result.captured, `hand ${h.handNo} captured`);

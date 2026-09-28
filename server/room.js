@@ -15,6 +15,7 @@ export const DEFAULT_DELAYS = {
   turnMs: 15000, returnMs: 30000, botMs: 700, nextHandMs: 30000,
   tributeMs: 5000, returnRevealMs: 3000, dealRoundMs: 120, claimGraceMs: 3000,
   restoreGraceMs: 20000, // after a server restart, humans count as present this long so they can reconnect
+  reclaimOfflineMs: 30000, // a guest seat that is only offline may be taken back by name after this long
 };
 // A bot holding the black 3 shows it this long after it was dealt to them.
 const BOT_CLAIM_MIN_MS = 1000;
@@ -70,6 +71,7 @@ export class Room {
     this.pausedAt = null;
     this.pausedRemaining = null; // ms left on the deadline when the host paused
     this.online = new Set();
+    this.offlineSince = new Map(); // playerId -> when that human was last seen (not saved: a restore resets it)
     this.graceUntil = null; // set after a restore: until then offline humans are not played automatically
     this.graceTimer = null;
     this.match = null;
@@ -97,6 +99,7 @@ export class Room {
     if (this.players.length >= MAX_PLAYERS) throw new HttpError(409, 'room_full');
     const player = { id: randomId(), token: randomToken(), name, isBot: false, userId: user?.id ?? null, leftEarly: false };
     this.players.push(player);
+    this.offlineSince.set(player.id, this.now()); // until their stream connects
     if (!this.hostId) this.hostId = player.id;
     this.say(`${name} 加入了房间`);
     this.changed();
@@ -176,9 +179,10 @@ export class Room {
 
   // Someone takes back a seat on auto-play (托管). A fresh token logs the old device out;
   // the seat is no longer counted as left, so it is rated normally.
-  reclaim(playerId) {
+  // keepToken: the caller already holds this seat's token (rejoin after leaving), so nothing to log out.
+  reclaim(playerId, { keepToken = false } = {}) {
     const player = this.players[this.seatOf(playerId)];
-    player.token = randomToken();
+    if (!keepToken) player.token = randomToken();
     player.leftEarly = false;
     this.say(`${player.name} 回到了牌桌`);
     if (this.waitsOn(playerId)) this.schedule();
@@ -204,9 +208,18 @@ export class Room {
     if (isOnline) this.online.add(playerId);
     else this.online.delete(playerId);
     if (was === isOnline) return;
+    if (isOnline) this.offlineSince.delete(playerId);
+    else this.offlineSince.set(playerId, this.now());
     if (this.waitsOn(playerId)) this.schedule();
     if (this.readyToAdvance()) return this.advanceAfterHand();
     this.changed();
+  }
+
+  // A seat someone else may take back by name: left the match, or offline for a while.
+  reclaimable(player) {
+    if (player.leftEarly) return true;
+    if (this.online.has(player.id)) return false;
+    return this.now() - (this.offlineSince.get(player.id) ?? this.now()) >= this.delays.reclaimOfflineMs;
   }
 
   // True when the pending automatic action depends on this player (their turn or their return).
@@ -396,8 +409,8 @@ export class Room {
   }
 
   finishDeal(leader) {
-    this.dealing = null;
     this.prepared = prepareHand(this.match, { leader });
+    this.dealing = null;
     this.afterDeal();
   }
 
@@ -408,14 +421,15 @@ export class Room {
     if (tribute.resisted) this.say('抗贡：本局免贡');
     for (const g of tribute.given) this.say(`${this.nameAt(g.from)} 向 ${this.nameAt(g.to)} 上贡`);
     this.returns = this.prepared.pendingReturns.map((r) => ({ ...r, card: null }));
-    if (!tribute.given.length) return this.beginPlay(this.prepared.hands);
-    this.phase = 'tribute'; // everyone watches the tribute cards move
+    if (!tribute.given.length && !tribute.resisted) return this.beginPlay(this.prepared.hands);
+    this.phase = 'tribute'; // everyone watches the tribute cards move, or sees 抗贡 announced
     this.setDeadline(this.delays.tributeMs);
     this.schedule();
     this.changed();
   }
 
   startReturns() {
+    if (!this.returns.length) return this.beginPlay(this.prepared.hands); // 抗贡: nothing to return
     this.phase = 'returning';
     this.setDeadline(this.noTimer() ? null : this.delays.returnMs);
     this.schedule();
@@ -617,6 +631,7 @@ export class Room {
     if (this.pausedRemaining !== null) this.deadline = now + this.pausedRemaining;
     Object.assign(this, { paused: false, pausedAt: null, pausedRemaining: null });
     this.say('游戏继续');
+    if (this.readyToAdvance()) return this.advanceAfterHand(); // everyone got ready while paused
     this.schedule(true);
     this.changed();
   }
@@ -837,6 +852,7 @@ export class Room {
       const { sinceLastMs, ...record } = s.handRecord;
       room.handRecord = { ...record, lastAt: now - sinceLastMs };
     }
+    for (const p of room.players) if (!p.isBot) room.offlineSince.set(p.id, now); // nobody is connected yet
     for (const p of room.players) room.viewFor(p.id); // fails here, not later in a timer, if the state is unusable
     try {
       room.startGrace();

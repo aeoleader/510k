@@ -179,10 +179,11 @@ export class Hub {
       if (existing.leftEarly && room.inMatch()) this.reclaim(room, existing);
       return { room, player: existing };
     }
-    const seat = !user && room.inMatch() ? room.players.find((p) => !p.isBot && !p.gone && p.name === name) : null;
+    // A guest seat that left or has been offline for a while; with duplicate names, a reclaimable one wins.
+    const named = !user && room.inMatch() ? room.players.filter((p) => !p.isBot && !p.gone && p.name === name) : [];
+    const seat = named.find((p) => p.userId === null && room.reclaimable(p)) ?? named[0];
     if (seat) {
-      const automatic = seat.leftEarly || !room.online.has(seat.id);
-      if (seat.userId !== null || !automatic) throw new HttpError(409, 'name_in_use');
+      if (seat.userId !== null || !room.reclaimable(seat)) throw new HttpError(409, 'name_in_use');
       this.reclaim(room, seat);
       return { room, player: seat };
     }
@@ -192,6 +193,12 @@ export class Hub {
   reclaim(room, player) {
     this.closeStreams(room, player.id);
     room.reclaim(player.id);
+  }
+
+  // Coming back with the seat's own token: a seat that left mid-match is played by its owner again.
+  rejoin(room, player) {
+    if (player.leftEarly && room.inMatch()) room.reclaim(player.id, { keepToken: true });
+    return player;
   }
 
   authenticate(code, token) {

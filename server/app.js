@@ -73,6 +73,7 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
     register: { limit: 5, windowMs: 10 * 60_000 },
     rooms: { limit: 30, windowMs: 10 * 60_000 },
     reads: { limit: 60, windowMs: 60_000 }, // replays and profiles run many queries each
+    pause: { limit: 6, windowMs: 60_000 }, // per player, pausing and resuming counted separately
     ...rateLimits,
   };
   const limits = Object.fromEntries(Object.entries(limitSpec).map(([k, spec]) => [k, new RateLimiter({ ...spec, now })]));
@@ -149,7 +150,7 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
     '/api/rooms/join': (body, ip) => {
       const code = parseCode(body.code);
       const existing = body.token ? hub.getRoom(code).findByToken(parseToken(body.token)) : null;
-      if (existing) return roomPayload(hub.getRoom(code), existing);
+      if (existing) return roomPayload(hub.getRoom(code), hub.rejoin(hub.getRoom(code), existing));
       limits.rooms.hit(ip);
       const user = userFor(body);
       const { room, player } = hub.joinRoom(code, displayName(body, user), user);
@@ -170,8 +171,8 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
     '/api/rooms/return': ({ room, player, body }) => room.submitReturn(player.id, parseCard(body.card)),
     '/api/rooms/claim-three': ({ room, player }) => room.claimThree(player.id),
     '/api/rooms/ready': ({ room, player }) => room.markReady(player.id),
-    '/api/rooms/pause': ({ room, player }) => room.pause(player.id),
-    '/api/rooms/resume': ({ room, player }) => room.resume(player.id),
+    '/api/rooms/pause': ({ room, player }) => { limits.pause.hit(`${player.id}|pause`); room.pause(player.id); },
+    '/api/rooms/resume': ({ room, player }) => { limits.pause.hit(`${player.id}|resume`); room.resume(player.id); },
     '/api/rooms/next': ({ room, player }) => room.nextHand(player.id),
     '/api/rooms/restart': ({ room, player }) => room.restart(player.id),
   };

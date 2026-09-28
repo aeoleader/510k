@@ -138,9 +138,9 @@ test('亮黑3: not before it is revealed, first claim wins, the deal goes on, th
   room.claimThree(claimer.id);
   assert.equal(room.claimedBy, seat);
   const other = people[(seat + 1) % 5];
-  assert.equal(code(() => room.claimThree(other.id)), 'already_claimed');
-  assert.equal(code(() => room.claimThree(claimer.id)), 'already_claimed');
-  if (index + 1 < 21) {
+  if (index + 1 < 21) { // a claim on the last round ends the deal at once (tested separately)
+    assert.equal(code(() => room.claimThree(other.id)), 'already_claimed');
+    assert.equal(code(() => room.claimThree(claimer.id)), 'already_claimed');
     assert.equal(room.phase, 'dealing', 'dealing continues after a claim');
     assert.equal(room.viewFor(other.id).claimedBy, seat);
   }
@@ -417,4 +417,136 @@ test('hand review: offline players do not hold up the next hand; the deadline st
   assert.ok(['tribute', 'playing'].includes(again.room.phase));
   room.destroy();
   again.room.destroy();
+});
+
+// Find the black 3 holder that is dealt first: [seat, index in their dealt order], or null.
+function firstHolder(room) {
+  const holders = room.dealing.order.map((o, seat) => [seat, firstThree(o)]).filter(([, i]) => i >= 0).sort((a, b) => a[1] - b[1]);
+  return holders[0] ?? null;
+}
+
+test('亮黑3 during the grace after the deal ends the deal at once', () => {
+  const { room, clock, host, people } = setup({ dealMode: true });
+  room.start(host.id);
+  const holder = firstHolder(room);
+  if (!holder) return room.destroy();
+  clock.advance(27 * 100 + 1000);
+  assert.equal(room.phase, 'dealing');
+  assert.equal(room.dealing.ended, true, 'in the claim grace');
+  room.claimThree(people[holder[0]].id);
+  assert.notEqual(room.phase, 'dealing');
+  assert.equal(room.prepared.leader, holder[0]);
+  room.destroy();
+});
+
+test('亮黑3 exactly when the last round is revealed ends the deal at once', () => {
+  const { room, clock, host, people } = setup({ dealMode: true });
+  room.start(host.id);
+  const holder = firstHolder(room);
+  if (!holder) return room.destroy();
+  clock.advance(27 * 100);
+  assert.equal(room.dealRounds(), room.dealing.total);
+  room.claimThree(people[holder[0]].id);
+  assert.notEqual(room.phase, 'dealing');
+  assert.equal(room.prepared.leader, holder[0]);
+  room.destroy();
+});
+
+test('pause during the claim grace, then resume: the grace keeps its remaining time', () => {
+  const { room, clock, host } = setup({ dealMode: true, online: ['甲'] });
+  room.start(host.id);
+  clock.advance(27 * 100 + 1000);
+  room.pause(host.id);
+  assert.equal(room.pausedRemaining, 2000);
+  clock.advance(60000);
+  assert.equal(room.phase, 'dealing');
+  room.resume(host.id);
+  assert.equal(room.deadline, clock.now() + 2000);
+  clock.advance(1999);
+  assert.equal(room.phase, 'dealing');
+  clock.advance(1);
+  assert.notEqual(room.phase, 'dealing');
+  room.destroy();
+});
+
+test('pause on a bot\'s turn: the bot waits, then plays after the resume', () => {
+  const { room, clock, host } = setup({ humans: ['甲'], bots: 3 });
+  room.start(host.id);
+  const runUntilBot = () => { for (let i = 0; i < 200 && !room.players[room.hand.turn].isBot; i++) clock.advance(50); };
+  runUntilBot();
+  assert.equal(room.players[room.hand.turn].isBot, true);
+  const played = room.actions.length;
+  room.pause(host.id);
+  assert.equal(room.pausedRemaining, null, 'a bot turn has no deadline');
+  clock.advance(60000);
+  assert.equal(room.actions.length, played);
+  room.resume(host.id);
+  clock.advance(DELAYS.botMs - 1);
+  assert.equal(room.actions.length, played);
+  clock.advance(1);
+  assert.equal(room.actions.length, played + 1);
+  room.destroy();
+});
+
+test('the host leaving mid-dealing while paused: still paused, the new host resumes the deal', () => {
+  const { room, clock, host, people } = setup({ dealMode: true });
+  room.start(host.id);
+  clock.advance(500);
+  room.pause(host.id);
+  room.markLeft(host.id);
+  assert.equal(room.paused, true);
+  assert.equal(room.phase, 'dealing');
+  assert.equal(room.hostId, people[1].id);
+  clock.advance(10000);
+  assert.equal(room.dealRounds(), 5);
+  assert.equal(code(() => room.claimThree(host.id)), 'paused');
+  room.resume(people[1].id);
+  clock.advance(100);
+  assert.equal(room.dealRounds(), 6);
+  room.destroy();
+});
+
+test('resume re-checks the review: if everyone left is ready, the next hand starts', () => {
+  const { room, host, people } = setup({ humans: ['甲', '乙'], bots: 2 });
+  room.start(host.id);
+  endHand(room, host);
+  room.markReady(host.id);
+  room.pause(host.id);
+  room.setOnline(people[1].id, false); // the one not ready drops while paused
+  assert.equal(room.phase, 'hand_over');
+  room.resume(host.id);
+  assert.ok(['tribute', 'playing'].includes(room.phase));
+  room.destroy();
+});
+
+test('抗贡 is shown in the tribute phase for tributeMs, then play starts without returns', () => {
+  const { room, clock, host } = setup();
+  room.start(host.id);
+  room.match = recordHand(room.match, { ranking: [0, 2, 1, 3], finished: [0, 2], captured: [0, 0, 0, 0] }).match;
+  let tries = 0;
+  while (!prepareHand(room.match).tribute.resisted) {
+    room.match.seed += 1;
+    assert.ok((tries += 1) < 100000, 'no 抗贡 deal found');
+  }
+  room.startHand();
+  assert.equal(room.phase, 'tribute');
+  const v = room.viewFor(host.id);
+  assert.equal(v.tribute.resisted, true);
+  assert.deepEqual(v.tribute.given, []);
+  assert.equal(room.deadline, clock.now() + DELAYS.tributeMs);
+  clock.advance(DELAYS.tributeMs - 1);
+  assert.equal(room.phase, 'tribute');
+  clock.advance(1);
+  assert.equal(room.phase, 'playing');
+  assert.deepEqual(room.returns, []);
+  room.destroy();
+});
+
+test('a failed deal finish leaves the dealing state intact', () => {
+  const { room, host } = setup({ dealMode: true });
+  room.start(host.id);
+  assert.throws(() => room.finishDeal(99), /bad_leader/);
+  assert.equal(room.phase, 'dealing');
+  assert.ok(room.dealing);
+  room.destroy();
 });

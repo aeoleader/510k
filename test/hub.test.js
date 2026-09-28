@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Hub, MAX_ROOMS, MAX_ROOMS_PER_IP } from '../server/hub.js';
-import { Room } from '../server/room.js';
+import { Room, DEFAULT_DELAYS } from '../server/room.js';
 import { RateLimiter } from '../server/limiter.js';
 import { HttpError } from '../server/http.js';
 
@@ -120,14 +120,15 @@ test('refreshing one user pushes a view to that player only', () => {
 
 // A 4-seat match in progress: host 甲 (guest), guest 乙, account seat 阿杰, one bot.
 function matchInProgress() {
-  const hub = new Hub({ delays: SLOW });
+  const clock = { t: 1_000_000 };
+  const hub = new Hub({ delays: SLOW, now: () => clock.t });
   const { room, player: host } = hub.createRoom('甲');
   const { player: guest } = hub.joinRoom(room.code, '乙');
   const { player: member } = hub.joinRoom(room.code, '阿杰', { id: 7, username: '阿杰' });
   room.addBot(host.id);
   for (const p of [host, guest, member]) room.setOnline(p.id, true);
   room.start(host.id);
-  return { hub, room, host, guest, member };
+  return { hub, room, host, guest, member, clock };
 }
 
 test('a guest who left mid-match takes the seat back by name', () => {
@@ -148,12 +149,16 @@ test('a guest who left mid-match takes the seat back by name', () => {
 });
 
 test('reclaiming by name: online seats and account seats are refused, offline guests come back', () => {
-  const { hub, room, guest } = matchInProgress();
+  const { hub, room, guest, clock } = matchInProgress();
   assert.equal(code(() => hub.joinRoom(room.code, '乙')), 'name_in_use', 'the owner is still online');
   assert.equal(code(() => hub.joinRoom(room.code, '阿杰')), 'name_in_use', 'a guest cannot take an account seat');
   assert.equal(code(() => hub.joinRoom(room.code, '丙')), 'in_progress', 'no such seat');
   room.setOnline(guest.id, false); // their stream closed
   assert.equal(room.isAutomatic(room.players.indexOf(guest)), true);
+  assert.equal(code(() => hub.joinRoom(room.code, '乙')), 'name_in_use', 'a moment offline is not enough');
+  clock.t += DEFAULT_DELAYS.reclaimOfflineMs - 1;
+  assert.equal(code(() => hub.joinRoom(room.code, '乙')), 'name_in_use');
+  clock.t += 1;
   const oldToken = guest.token;
   assert.equal(hub.joinRoom(room.code, '乙').player, guest);
   assert.notEqual(guest.token, oldToken);
@@ -170,6 +175,30 @@ test('a logged-in player who left mid-match gets the seat back and is no longer 
   assert.equal(hub.joinRoom(room.code, '阿杰', { id: 7, username: '阿杰' }).player, member);
   assert.equal(member.leftEarly, false);
   assert.notEqual(member.token, oldToken);
+  hub.deleteRoom(room.code);
+});
+
+test('reclaiming by name with duplicate names takes the seat that can be reclaimed', () => {
+  const { hub, room, host, clock } = matchInProgress();
+  const twin = room.players.find((p) => p.isBot);
+  Object.assign(twin, { isBot: false, name: '乙', token: 'twin-token' }); // a second guest named 乙, offline
+  room.offlineSince.set(twin.id, clock.t);
+  clock.t += DEFAULT_DELAYS.reclaimOfflineMs;
+  assert.equal(room.players.findIndex((p) => p.name === '乙') < room.players.indexOf(twin), true, 'the online 乙 comes first');
+  assert.equal(hub.joinRoom(room.code, '乙').player, twin);
+  assert.equal(host.leftEarly, false);
+  hub.deleteRoom(room.code);
+});
+
+test('rejoining with the token of a seat that left mid-match puts the owner back in control', () => {
+  const { hub, room, guest } = matchInProgress();
+  const token = guest.token;
+  hub.leave(room, guest);
+  assert.equal(guest.leftEarly, true);
+  assert.equal(hub.rejoin(room, room.findByToken(token)), guest);
+  assert.equal(guest.leftEarly, false);
+  assert.equal(guest.token, token, 'the token the caller holds stays valid');
+  assert.match(room.log.at(-1).text, /回到了牌桌/);
   hub.deleteRoom(room.code);
 });
 
