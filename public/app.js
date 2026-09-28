@@ -3,6 +3,7 @@ import { identify, beats } from '/engine/combos.js';
 import { sortBySize, sortBy510k, bombValues } from '/engine/sort.js';
 import { valueOf, isJoker } from '/engine/cards.js';
 import { TIER_ICONS } from '/vendor/tier-icons.js';
+import { Effects } from '/effects.js';
 
 const SUIT_SYMBOL = { S: '♠', H: '♥', C: '♣', D: '♦' };
 const RANK_LABEL = { T: '10' };
@@ -39,7 +40,12 @@ const state = {
   accountToken: readPref('accountToken', null),
   account: null,
   entryMode: readPref('entryMode', 'guest'),
+  fxSeen: new Set(), // play / trick / head ids already animated
+  fxPrimed: false, // false until the first table render, so a reload does not replay old plays
 };
+
+const BIG_TRICK_POINTS = 30;
+const fx = new Effects($('fx'), document.querySelector('.felt-wrap'));
 
 function readPref(key, fallback) {
   try { return localStorage.getItem(`510k:${key}`) ?? fallback; } catch { return fallback; }
@@ -111,7 +117,8 @@ function enterRoom({ code, token }) {
 function leaveRoomLocally() {
   if (state.events) state.events.close();
   writeSession(`token:${state.code}`, null);
-  Object.assign(state, { code: null, token: null, view: null, events: null });
+  Object.assign(state, { code: null, token: null, view: null, events: null, fxPrimed: false });
+  state.fxSeen.clear();
   state.selected.clear();
   const url = new URL(location.href);
   url.searchParams.delete('room');
@@ -362,13 +369,24 @@ function seatAngle(seat, v) {
   return Math.PI / 2 + (rel * 2 * Math.PI) / n;
 }
 
+function seatPoint(seat, v, radius = 1) {
+  const a = seatAngle(seat, v);
+  const narrow = window.innerWidth < 560;
+  return { x: 50 + (narrow ? 37 : 43) * radius * Math.cos(a), y: 50 + 42 * radius * Math.sin(a) };
+}
+
+function playPoint(seat, v) {
+  const a = seatAngle(seat, v);
+  const narrow = window.innerWidth < 560;
+  return { x: 50 + (narrow ? 18 : 24) * Math.cos(a), y: 50 + 22 * Math.sin(a) };
+}
+
 function renderTable(v) {
+  const stage = document.querySelector('.felt-wrap').getBoundingClientRect();
+  const effects = [];
   const seats = [];
   for (const p of v.players) {
-    const a = seatAngle(p.seat, v);
-    const narrow = window.innerWidth < 560;
-    const x = 50 + (narrow ? 37 : 43) * Math.cos(a);
-    const y = 50 + 42 * Math.sin(a);
+    const { x, y } = seatPoint(p.seat, v);
     const cls = ['seat'];
     if (v.turn === p.seat) cls.push('is-turn');
     if (p.place) cls.push('is-out');
@@ -390,14 +408,34 @@ function renderTable(v) {
 
     const action = v.seatActions[p.seat];
     if (action) {
-      const px = 50 + (narrow ? 18 : 24) * Math.cos(a);
-      const py = 50 + 22 * Math.sin(a);
+      const { x: px, y: py } = playPoint(p.seat, v);
       const isTop = v.trick && v.trick.seat === p.seat;
+      const fresh = state.fxPrimed && !state.fxSeen.has(action.id);
+      // Fresh plays fly in from the player's seat; older ones stay put across re-renders.
+      const dx = ((x - px) / 100) * stage.width;
+      const dy = ((y - py) / 100) * stage.height;
       const body = action.pass ? '<span class="pass-tag">不要</span>' : fanHtml(action.cards, action.cards.length > 8 ? 'sm' : 'md');
-      seats.push(`<div class="played ${isTop ? 'is-top' : ''}" style="--x:${px}%;--y:${py}%">${body}</div>`);
+      seats.push(`<div class="played ${isTop ? 'is-top' : ''} ${fresh ? 'fresh' : ''}" style="--x:${px}%;--y:${py}%;--dx:${dx}px;--dy:${dy}px">${body}</div>`);
+      if (fresh && action.cards) effects.push(() => fx.play({ type: action.type, level: action.level, x: px, y: py }));
+      state.fxSeen.add(action.id);
+    }
+    const headKey = `head:${v.handNo}:${p.seat}`;
+    if (p.place === 1 && !state.fxSeen.has(headKey)) {
+      if (state.fxPrimed) effects.push(() => fx.banner(`${esc(p.name.replace(/\(机器人\)$/, ''))} 头游`));
+      state.fxSeen.add(headKey);
     }
   }
+  const trick = v.lastTrick;
+  if (trick?.id && !state.fxSeen.has(trick.id)) {
+    if (state.fxPrimed && trick.points >= BIG_TRICK_POINTS) {
+      const { x, y } = seatPoint(trick.seat, v, 0.72);
+      effects.push(() => fx.points({ x, y, points: trick.points }));
+    }
+    state.fxSeen.add(trick.id);
+  }
   $('seats').innerHTML = seats.join('');
+  state.fxPrimed = true;
+  for (const run of effects) run();
 
   const t = v.trick;
   let center;

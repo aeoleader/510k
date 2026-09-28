@@ -264,10 +264,13 @@ export class Room {
   }
 
   onEvent(e) {
-    if (e.type === 'play') this.seatActions[e.seat] = { cards: e.cards, type: e.combo.type, auto: e.auto };
-    else if (e.type === 'pass') this.seatActions[e.seat] = { pass: true, auto: e.auto };
+    // `seq` (per hand) lets clients tell a new play or trick from one they have already animated.
+    const id = `${this.match.handNo}:${e.seq}`;
+    if (e.type === 'play') {
+      this.seatActions[e.seat] = { id, cards: e.cards, type: e.combo.type, level: e.combo.level, auto: e.auto };
+    } else if (e.type === 'pass') this.seatActions[e.seat] = { id, pass: true, auto: e.auto };
     else if (e.type === 'trick') {
-      this.lastTrick = { seat: e.seat, points: e.points };
+      this.lastTrick = { id, seat: e.seat, points: e.points };
       this.seatActions = {};
       if (e.points > 0) this.say(`${this.nameAt(e.seat)} 收下 ${e.points} 分`);
     } else if (e.type === 'finish') this.say(`${this.nameAt(e.seat)} 第 ${e.place} 个出完`);

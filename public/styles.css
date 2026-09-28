@@ -263,11 +263,14 @@ select { cursor: pointer; }
 .played {
   position: absolute; left: var(--x); top: var(--y); transform: translate(-50%, -50%);
   display: grid; justify-items: center; gap: 4px; pointer-events: none; z-index: 1;
-  animation: land 0.35s var(--ease);
 }
+.played.fresh { animation: fly-in 0.42s var(--ease); }
 .played .pass-tag { padding: 3px 12px; border-radius: 999px; background: rgba(0, 0, 0, 0.3); color: rgba(238, 242, 234, 0.7); font-size: 13px; }
 .played.is-top .card { box-shadow: 0 0 0 2px var(--accent), 0 4px 10px rgba(0, 0, 0, 0.35); }
-@keyframes land { from { opacity: 0; transform: translate(-50%, -30%) scale(0.92); } }
+@keyframes fly-in {
+  from { opacity: 0.2; transform: translate(calc(-50% + var(--dx, 0px)), calc(-50% + var(--dy, 0px))) scale(0.55) rotate(-6deg); }
+  70% { opacity: 1; transform: translate(-50%, -50%) scale(1.06); }
+}
 
 /* ---- cards ---------------------------------------------------------------------------- */
 
@@ -497,6 +500,122 @@ select { cursor: pointer; }
 
 .seat .nameplate .tier-badge { margin-top: 2px; }
 
+/* ---- play effects --------------------------------------------------------------------------- */
+
+.fx-layer { position: absolute; inset: 0; pointer-events: none; z-index: 5; overflow: visible; }
+.fx { position: absolute; left: var(--x); top: var(--y); transform: translate(-50%, -50%); pointer-events: none; }
+
+.felt-wrap.shake-md { animation: shake 0.45s cubic-bezier(0.36, 0.07, 0.19, 0.97); }
+.felt-wrap.shake-lg { animation: shake 0.7s cubic-bezier(0.36, 0.07, 0.19, 0.97); --shake: 9px; }
+.felt-wrap.shake-xl { animation: shake 0.9s cubic-bezier(0.36, 0.07, 0.19, 0.97); --shake: 14px; }
+@keyframes shake {
+  10%, 90% { transform: translate(calc(var(--shake, 5px) * -0.3), 0); }
+  20%, 80% { transform: translate(calc(var(--shake, 5px) * 0.5), calc(var(--shake, 5px) * 0.2)); }
+  30%, 50%, 70% { transform: translate(calc(var(--shake, 5px) * -1), calc(var(--shake, 5px) * -0.3)); }
+  40%, 60% { transform: translate(var(--shake, 5px), calc(var(--shake, 5px) * 0.3)); }
+}
+
+.fx-ring {
+  width: 40px; height: 40px; border-radius: 50%;
+  border: 4px solid var(--ring, #ffd36a);
+  box-shadow: 0 0 18px var(--ring, #ffd36a), inset 0 0 12px var(--ring, #ffd36a);
+  animation: ring 0.9s var(--ease) var(--delay, 0ms) both;
+}
+.fx-ring-gold { --ring: #ffcf5c; }
+.fx-ring-pure { --ring: #fff0a8; border-width: 6px; }
+.fx-ring-fire { --ring: #ff7a3d; border-width: 6px; }
+.fx-ring-king {
+  border: 0; width: 60px; height: 60px;
+  background: conic-gradient(#ff3d6e, #ffb800, #3dffb0, #3db4ff, #b43dff, #ff3d6e);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 8px), #000 calc(100% - 8px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 8px), #000 calc(100% - 8px));
+  box-shadow: none; filter: drop-shadow(0 0 14px rgba(255, 120, 220, 0.8));
+}
+@keyframes ring { from { opacity: 1; transform: translate(-50%, -50%) scale(0.3); } to { opacity: 0; transform: translate(-50%, -50%) scale(7); } }
+
+.fx-sparks { width: 0; height: 0; }
+.fx-sparks i {
+  position: absolute; left: 0; top: 0; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--c); box-shadow: 0 0 8px var(--c);
+  animation: spark var(--t, 0.7s) ease-out forwards;
+}
+@keyframes spark {
+  from { opacity: 1; transform: rotate(var(--a)) translateX(0) scale(1); }
+  to { opacity: 0; transform: rotate(var(--a)) translateX(var(--d)) scale(0.3); }
+}
+
+.fx-stamp { left: 50%; top: 50%; z-index: 3; }
+.fx-stamp span {
+  display: block; padding: 6px 22px; border-radius: 14px; white-space: nowrap;
+  font-size: 40px; font-weight: 900; letter-spacing: 4px;
+  animation: stamp 1.3s var(--ease) both;
+}
+.fx-stamp-gold span { color: #3a2300; background: linear-gradient(135deg, #b8860b, #ffe27a 40%, #f0b429); box-shadow: 0 8px 30px rgba(255, 190, 60, 0.45); }
+.fx-stamp-pure span { color: #2b1800; background: linear-gradient(135deg, #fff4b8, #ffd24d 45%, #fff1a8); box-shadow: 0 0 40px rgba(255, 220, 100, 0.8); font-size: 44px; }
+.fx-stamp-bomb span { color: #fff; background: linear-gradient(135deg, #b3261e, #ff6a2b); box-shadow: 0 10px 36px rgba(255, 90, 40, 0.55); font-size: 48px; }
+.fx-stamp-bigbomb span {
+  color: #fff; background: linear-gradient(135deg, #7a0f0f, #ff3d1f 45%, #ffb13b); font-size: 60px;
+  box-shadow: 0 0 60px rgba(255, 80, 30, 0.8); text-shadow: 0 2px 0 rgba(0, 0, 0, 0.3);
+}
+.fx-stamp-king span {
+  font-size: 84px; letter-spacing: 10px; padding: 8px 34px; color: #fff; background: #1a0b24;
+  text-shadow: 0 0 18px rgba(255, 170, 255, 0.95);
+  box-shadow: 0 0 0 4px #ffb800, 0 0 60px rgba(255, 90, 180, 0.9), 0 0 120px rgba(120, 90, 255, 0.6);
+  animation: stamp-king 1.8s var(--ease) both;
+}
+@keyframes stamp {
+  0% { opacity: 0; transform: scale(2.4) rotate(-8deg); }
+  22% { opacity: 1; transform: scale(0.94) rotate(-3deg); }
+  32% { transform: scale(1.04) rotate(-3deg); }
+  78% { opacity: 1; transform: scale(1) rotate(-3deg); }
+  100% { opacity: 0; transform: scale(1.1) rotate(-3deg); }
+}
+@keyframes stamp-king {
+  0% { opacity: 0; transform: scale(3.2); filter: blur(6px); }
+  20% { opacity: 1; transform: scale(0.92); filter: blur(0); }
+  30% { transform: scale(1.06); }
+  40%, 85% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.15); }
+}
+
+.fx-flash { position: fixed; inset: 0; left: 0; top: 0; transform: none; background: radial-gradient(circle, rgba(255, 190, 110, 0.55), transparent 70%); animation: flash 0.6s ease-out forwards; z-index: 30; }
+.fx-flash-king { background: radial-gradient(circle, rgba(255, 255, 255, 0.85), rgba(255, 120, 220, 0.35) 45%, transparent 75%); }
+.fx-dim { position: fixed; inset: 0; left: 0; top: 0; transform: none; background: rgba(4, 0, 12, 0.6); animation: dim 1.6s ease forwards; z-index: 4; }
+@keyframes flash { from { opacity: 1; } to { opacity: 0; } }
+@keyframes dim { 0% { opacity: 0; } 15%, 70% { opacity: 1; } 100% { opacity: 0; } }
+
+.fx-points {
+  font-size: 30px; font-weight: 900; color: var(--accent-2);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.6), 0 0 18px rgba(255, 190, 90, 0.6);
+  animation: float-up 1.2s var(--ease) forwards;
+}
+.fx-points small { font-size: 16px; margin-left: 2px; }
+@keyframes float-up {
+  0% { opacity: 0; transform: translate(-50%, 0) scale(0.6); }
+  20% { opacity: 1; transform: translate(-50%, -60%) scale(1.1); }
+  100% { opacity: 0; transform: translate(-50%, -180%) scale(1); }
+}
+
+.fx-banner { left: 50%; top: 32%; z-index: 3; }
+.fx-banner span {
+  display: block; padding: 8px 26px; border-radius: 999px; white-space: nowrap;
+  font-size: 22px; font-weight: 800; color: var(--accent-ink); background: var(--accent);
+  box-shadow: 0 10px 30px rgba(240, 165, 58, 0.45);
+  animation: banner 1.7s var(--ease) both;
+}
+@keyframes banner {
+  0% { opacity: 0; transform: translateY(20px) scale(0.9); }
+  15%, 80% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-12px); }
+}
+
+@media (max-width: 560px) {
+  .fx-stamp span { font-size: 28px; padding: 4px 14px; }
+  .fx-stamp-bomb span { font-size: 34px; }
+  .fx-stamp-bigbomb span { font-size: 40px; }
+  .fx-stamp-king span { font-size: 54px; letter-spacing: 6px; }
+}
+
 /* ---- responsive --------------------------------------------------------------------------------- */
 
 @media (min-width: 1200px) {
@@ -547,4 +666,6 @@ select { cursor: pointer; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
+  /* keep the stamps readable briefly; the element is removed by script */
+  .fx-stamp span, .fx-banner span { opacity: 1; }
 }
