@@ -10,7 +10,7 @@ import { identify } from '../engine/combos.js';
 import { createHandState, replay, ranking } from '../engine/game.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const FAST = { turnMs: 2000, returnMs: 2000, botMs: 1, nextHandMs: 1 };
+const FAST = { turnMs: 2000, returnMs: 2000, botMs: 1, nextHandMs: 1, tributeMs: 1, returnRevealMs: 1 };
 let server;
 let base;
 let accounts;
@@ -103,7 +103,35 @@ test('input validation', async () => {
   assert.equal((await post('/api/rooms/set-turn-time', { code, token, seconds: 7 }, 400)).error, 'bad_turn_time');
   assert.equal((await post('/api/rooms/set-turn-time', { code, token, seconds: 45 })).ok, true);
   assert.equal((await post('/api/rooms/swap-seats', { code, token, a: 'x', b: 'y' }, 404)).error, 'no_player');
+  assert.equal((await post('/api/rooms/set-turn-time', { code, token, seconds: 0 })).ok, true, '0 = 不计时');
+  assert.equal((await post('/api/rooms/deal-mode', { code, token, on: 'true' }, 400)).error, 'bad_deal_mode');
+  assert.equal((await post('/api/rooms/deal-mode', { code, token }, 400)).error, 'bad_deal_mode');
+  assert.equal((await post('/api/rooms/deal-mode', { code, token, on: true })).ok, true);
+  assert.equal((await post('/api/rooms/pause', { code, token }, 409)).error, 'cannot_pause');
+  assert.equal((await post('/api/rooms/resume', { code, token }, 409)).error, 'not_paused');
+  assert.equal((await post('/api/rooms/claim-three', { code, token }, 409)).error, 'not_dealing');
+  assert.equal((await post('/api/rooms/ready', { code, token }, 409)).error, 'not_hand_over');
   assert.equal((await post('/api/rooms/leave', { code, token })).ok, true);
+});
+
+test('pause, resume and dealing mode over HTTP', async () => {
+  const host = await post('/api/rooms/create', { name: '甲' });
+  const guest = await post('/api/rooms/join', { code: host.code, name: '乙' });
+  const view = await listen(host.code, host.token);
+  for (let i = 0; i < 2; i++) await post('/api/rooms/add-bot', { code: host.code, token: host.token });
+  await post('/api/rooms/deal-mode', { code: host.code, token: host.token, on: true });
+  await post('/api/rooms/start', { code: host.code, token: host.token });
+  await until(() => view.view?.phase === 'dealing');
+  assert.equal(view.view.dealMode, true);
+  assert.equal(view.view.dealTotalRounds, 27);
+  assert.equal((await post('/api/rooms/pause', { code: guest.code, token: guest.token }, 403)).error, 'host_only');
+  await post('/api/rooms/pause', { code: host.code, token: host.token });
+  await until(() => view.view.paused === true);
+  assert.equal((await post('/api/rooms/claim-three', { code: guest.code, token: guest.token }, 409)).error, 'paused');
+  await post('/api/rooms/resume', { code: host.code, token: host.token });
+  await until(() => view.view.paused === false);
+  await post('/api/rooms/leave', { code: guest.code, token: guest.token });
+  await post('/api/rooms/leave', { code: host.code, token: host.token });
 });
 
 test('reconnecting with the token returns the same seat', async () => {

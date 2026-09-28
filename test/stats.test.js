@@ -65,3 +65,12 @@ test("a sweep by the other team is not shown as the player's sweep", async () =>
   assert.equal(p.recent[0].highlights.sweep, undefined);
   assert.equal(p.totals.sweeps, 0);
 });
+
+test('replays carry who showed the black 3; older hands without it load as null', async () => {
+  const { accounts, stats, me, mate } = await setup();
+  const dealt = hand(1);
+  dealt.tribute = { ...dealt.tribute, claimedBy: 2 };
+  const id = record(accounts, me, mate, { totals: [200, 100], hands: [hand(0), dealt] });
+  const replay = stats.replay(id);
+  assert.deepEqual(replay.hands.map((h) => h.tribute.claimedBy), [null, 2]);
+});

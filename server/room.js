@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
-import { defaultDecks, sumPoints, MIN_PLAYERS, MAX_PLAYERS } from '../engine/cards.js';
+import { defaultDecks, sumPoints, deal, MIN_PLAYERS, MAX_PLAYERS } from '../engine/cards.js';
 import { createHandState, apply, ranking, GameError } from '../engine/game.js';
-import { createMatch, prepareHand, completeReturns, recordHand, isMatchOver, HANDS_PER_MATCH } from '../engine/match.js';
+import { createMatch, prepareHand, completeReturns, recordHand, isMatchOver, handSeed, HANDS_PER_MATCH } from '../engine/match.js';
 import { botAction } from '../engine/bot.js';
 import { computeRatingDeltas } from '../engine/rating.js';
 import { findHighlights } from '../engine/highlights.js';
@@ -11,7 +11,17 @@ import { lowestCard } from '../engine/tribute.js';
 import { displayOrder } from '../engine/sort.js';
 import { HttpError } from './http.js';
 
-export const DEFAULT_DELAYS = { turnMs: 15000, returnMs: 15000, botMs: 700, nextHandMs: 6000 };
+export const DEFAULT_DELAYS = {
+  turnMs: 15000, returnMs: 30000, botMs: 700, nextHandMs: 30000,
+  tributeMs: 5000, returnRevealMs: 3000, dealRoundMs: 120, claimGraceMs: 3000,
+};
+// A bot holding the black 3 shows it this long after it was dealt to them.
+const BOT_CLAIM_MIN_MS = 1000;
+const BOT_CLAIM_MAX_MS = 2500;
+const PAUSABLE = ['dealing', 'tribute', 'returning', 'return_reveal', 'playing', 'hand_over'];
+// From these phases on, returned cards are public.
+const RETURNS_PUBLIC = ['return_reveal', 'playing', 'hand_over', 'match_over'];
+const isBlackThree = (id) => id.startsWith('3S');
 const LOG_LIMIT = 40;
 const BOT_NAMES = ['小白', '阿福', '老K', '十点', '五哥', '炸弹王', '顺子', '对子'];
 
@@ -23,13 +33,14 @@ const randomId = () => `p_${crypto.randomBytes(6).toString('hex')}`;
 export class Room {
   // accountView(userId) -> public account or null; onMatchOver(room) persists a finished match.
   constructor({
-    code, delays = DEFAULT_DELAYS, timers = globalThis, now = Date.now, onChange = () => {},
+    code, delays = DEFAULT_DELAYS, timers = globalThis, now = Date.now, random = Math.random, onChange = () => {},
     accountView = () => null, onMatchOver = () => {}, counterFor = () => false,
   }) {
     this.code = code;
-    this.delays = delays;
+    this.delays = { ...DEFAULT_DELAYS, ...delays }; // callers may pass only some delays
     this.timers = timers;
     this.now = now;
+    this.random = random; // bot claim times and the fallback leader; tests pass their own
     this.onChange = onChange;
     this.accountView = accountView;
     this.counterFor = counterFor; // userId -> whether an admin enabled the card counter for them
@@ -43,8 +54,17 @@ export class Room {
     this.players = [];
     this.hostId = null;
     this.decks = null; // null = default for the player count
-    this.turnSeconds = null; // host's choice of time per turn; null = the server default
-    this.phase = 'lobby'; // lobby | returning | playing | hand_over | match_over
+    this.turnSeconds = null; // host's choice of time per turn; null = the server default, 0 = no limit
+    this.dealMode = false; // host's choice: deal card by card and race to show the black 3
+    // lobby | dealing | tribute | returning | return_reveal | playing | hand_over | match_over
+    this.phase = 'lobby';
+    this.dealing = null; // { order, startedAt, total, claimAt: { seat: ms }, ended } during `dealing`
+    this.claimedBy = null; // seat that showed the black 3 this hand
+    this.revealHands = null; // hands after every return, played from once `return_reveal` ends
+    this.ready = new Set(); // seats ready for the next hand during `hand_over`
+    this.paused = false;
+    this.pausedAt = null;
+    this.pausedRemaining = null; // ms left on the deadline when the host paused
     this.online = new Set();
     this.match = null;
     this.prepared = null;
@@ -144,6 +164,7 @@ export class Room {
     this.passHost(playerId);
     this.say(`${player.name} 离开了牌桌，由机器人托管到本轮结束`);
     this.schedule();
+    if (this.readyToAdvance()) return this.advanceAfterHand();
     this.changed();
   }
 
@@ -162,6 +183,7 @@ export class Room {
     else this.online.delete(playerId);
     if (was === isOnline) return;
     if (this.waitsOn(playerId)) this.schedule();
+    if (this.readyToAdvance()) return this.advanceAfterHand();
     this.changed();
   }
 
@@ -180,6 +202,13 @@ export class Room {
     this.changed();
   }
 
+  setDealMode(byId, on) {
+    this.requireHost(byId);
+    this.requirePhase('lobby', 'in_progress');
+    this.dealMode = on;
+    this.changed();
+  }
+
   setTurnSeconds(byId, seconds) {
     this.requireHost(byId);
     this.requirePhase('lobby', 'in_progress');
@@ -188,7 +217,12 @@ export class Room {
   }
 
   turnMs() {
-    return this.turnSeconds ? this.turnSeconds * 1000 : this.delays.turnMs;
+    return this.turnSeconds === null ? this.delays.turnMs : this.turnSeconds * 1000;
+  }
+
+  // 不计时: online humans are never timed out.
+  noTimer() {
+    return this.turnSeconds === 0;
   }
 
   effectiveDecks() {
@@ -207,6 +241,7 @@ export class Room {
     this.matchId = null;
     this.ratingsBefore = this.players.map((p) => (p.userId ? this.accountView(p.userId)?.rating ?? null : null));
     for (const p of this.players) p.leftEarly = false;
+    this.paused = false;
     this.match = createMatch({
       playerCount: this.players.length,
       decks: this.effectiveDecks(),
@@ -222,38 +257,152 @@ export class Room {
     this.clearTimer();
     this.players = this.players.filter((p) => !p.gone);
     for (const p of this.players) p.leftEarly = false;
-    Object.assign(this, { phase: 'lobby', match: null, prepared: null, hand: null, result: null, returns: [], deadline: null, deadlineSpan: null });
+    Object.assign(this, {
+      phase: 'lobby', match: null, prepared: null, hand: null, result: null, returns: [], deadline: null, deadlineSpan: null,
+      dealing: null, claimedBy: null, revealHands: null, ready: new Set(), paused: false,
+    });
     this.changed();
   }
 
   nextHand(byId) {
     this.requireHost(byId);
     this.requirePhase('hand_over', 'not_finished');
+    this.requireRunning();
     this.advanceAfterHand();
   }
 
+  // hand_over: a player is done reviewing. The next hand starts once every online human is ready.
+  markReady(playerId) {
+    this.requirePhase('hand_over', 'not_hand_over');
+    this.requireRunning();
+    this.ready.add(this.activeSeatOf(playerId));
+    if (this.readyToAdvance()) return this.advanceAfterHand();
+    this.changed();
+  }
+
+  readyToAdvance() {
+    if (this.phase !== 'hand_over' || this.paused) return false;
+    const waiting = this.players.flatMap((p, seat) => (!p.isBot && !p.leftEarly && this.online.has(p.id) ? [seat] : []));
+    return waiting.length > 0 && waiting.every((seat) => this.ready.has(seat));
+  }
+
   startHand() {
-    this.prepared = prepareHand(this.match);
-    this.result = null;
-    this.lastTrick = null;
-    this.seatActions = {};
-    const { tribute, handNo } = this.prepared;
-    this.say(`第 ${handNo + 1} 局开始`);
+    Object.assign(this, {
+      prepared: null, hand: null, result: null, lastTrick: null, seatActions: {}, returns: [],
+      claimedBy: null, revealHands: null, ready: new Set(),
+    });
+    this.say(`第 ${this.match.handNo + 1} 局开始`);
+    if (this.dealMode) this.startDealing();
+    else {
+      this.prepared = prepareHand(this.match);
+      this.afterDeal();
+    }
+  }
+
+  // ---- dealing (dealMode): cards are revealed one round at a time; first to show the black 3 leads.
+
+  startDealing() {
+    const { order } = deal({ playerCount: this.match.playerCount, decks: this.match.decks, seed: handSeed(this.match, this.match.handNo) });
+    const startedAt = this.now();
+    const claimAt = {};
+    order.forEach((cards, seat) => {
+      const i = cards.findIndex(isBlackThree);
+      if (i < 0 || !this.players[seat].isBot) return; // offline humans do not claim
+      const wait = BOT_CLAIM_MIN_MS + Math.floor(this.random() * (BOT_CLAIM_MAX_MS - BOT_CLAIM_MIN_MS + 1));
+      claimAt[seat] = startedAt + (i + 1) * this.delays.dealRoundMs + wait;
+    });
+    this.dealing = { order, startedAt, total: order[0].length, claimAt, ended: false };
+    this.phase = 'dealing';
+    this.setDeadline(null);
+    this.schedule();
+    this.changed();
+  }
+
+  // Rounds revealed so far; frozen while paused.
+  dealRounds() {
+    const at = this.paused ? this.pausedAt : this.now();
+    const rounds = Math.floor((at - this.dealing.startedAt) / this.delays.dealRoundMs);
+    return Math.max(0, Math.min(this.dealing.total, rounds));
+  }
+
+  dealEndAt() {
+    return this.dealing.startedAt + this.dealing.total * this.delays.dealRoundMs;
+  }
+
+  claimThree(playerId) {
+    this.requirePhase('dealing', 'not_dealing');
+    this.requireRunning();
+    const seat = this.activeSeatOf(playerId);
+    if (this.claimedBy !== null) throw new HttpError(409, 'already_claimed');
+    if (!this.dealing.order[seat].slice(0, this.dealRounds()).some(isBlackThree)) throw new HttpError(409, 'no_black_three');
+    this.claim(seat);
+  }
+
+  claim(seat) {
+    this.claimedBy = seat;
+    this.say(`${this.nameAt(seat)} 亮黑3！`);
+    if (this.dealRounds() >= this.dealing.total) return this.finishDeal(seat);
+    this.schedule();
+    this.changed();
+  }
+
+  // Timer during `dealing`: bot claims, the end of the deal, then the claim grace.
+  dealTick() {
+    const d = this.dealing;
+    const now = this.now();
+    if (this.claimedBy === null) {
+      const due = Object.entries(d.claimAt).filter(([, at]) => at <= now).sort((a, b) => a[1] - b[1])[0];
+      if (due) return this.claim(Number(due[0]));
+    }
+    if (now < this.dealEndAt()) return this.schedule();
+    if (this.claimedBy !== null) return this.finishDeal(this.claimedBy);
+    if (!d.ended) {
+      // Everything is dealt and nobody has shown the black 3 yet: a short grace to do it.
+      d.ended = true;
+      this.deadline = this.dealEndAt() + this.delays.claimGraceMs;
+      this.deadlineSpan = this.delays.claimGraceMs;
+      this.schedule();
+      this.changed();
+      return;
+    }
+    if (now < this.deadline) return this.schedule();
+    const holders = d.order.flatMap((cards, seat) => (cards.some(isBlackThree) ? [seat] : []));
+    const pool = holders.length ? holders : this.players.map((_, seat) => seat);
+    const seat = pool[Math.floor(this.random() * pool.length)];
+    this.say(`没人亮黑3，由 ${this.nameAt(seat)} 先出`);
+    this.finishDeal(seat);
+  }
+
+  finishDeal(leader) {
+    this.dealing = null;
+    this.prepared = prepareHand(this.match, { leader });
+    this.afterDeal();
+  }
+
+  // ---- tribute and returns -------------------------------------------------
+
+  afterDeal() {
+    const { tribute } = this.prepared;
     if (tribute.resisted) this.say('抗贡：本局免贡');
     for (const g of tribute.given) this.say(`${this.nameAt(g.from)} 向 ${this.nameAt(g.to)} 上贡`);
     this.returns = this.prepared.pendingReturns.map((r) => ({ ...r, card: null }));
-    if (this.returns.length) {
-      this.phase = 'returning';
-      this.setDeadline(this.delays.returnMs);
-      this.schedule();
-      this.changed();
-    } else {
-      this.beginPlay(this.prepared.hands);
-    }
+    if (!tribute.given.length) return this.beginPlay(this.prepared.hands);
+    this.phase = 'tribute'; // everyone watches the tribute cards move
+    this.setDeadline(this.delays.tributeMs);
+    this.schedule();
+    this.changed();
+  }
+
+  startReturns() {
+    this.phase = 'returning';
+    this.setDeadline(this.noTimer() ? null : this.delays.returnMs);
+    this.schedule();
+    this.changed();
   }
 
   submitReturn(playerId, card) {
     this.requirePhase('returning', 'not_returning');
+    this.requireRunning();
     const seat = this.activeSeatOf(playerId);
     const pending = this.returns.find((r) => r.from === seat && r.card === null);
     if (!pending) throw new HttpError(409, 'nothing_to_return');
@@ -268,8 +417,11 @@ export class Room {
       this.changed();
       return;
     }
-    const hands = completeReturns(this.prepared, this.returns.map(({ from, to, card }) => ({ from, to, card })));
-    this.beginPlay(hands);
+    this.revealHands = completeReturns(this.prepared, this.returns.map(({ from, to, card }) => ({ from, to, card })));
+    this.phase = 'return_reveal'; // returned cards become public
+    this.setDeadline(this.delays.returnRevealMs);
+    this.schedule();
+    this.changed();
   }
 
   beginPlay(hands) {
@@ -284,6 +436,7 @@ export class Room {
       tribute: {
         dealt, leftover, pairs: tribute.pairs, resisted: tribute.resisted, given: tribute.given,
         returns: this.returns.map(({ from, to, card }) => ({ from, to, card })),
+        claimedBy: this.claimedBy,
       },
       initialHands: hands.map((h) => [...h]),
       actions: [],
@@ -298,10 +451,12 @@ export class Room {
   }
 
   play(playerId, cards) {
+    this.requireRunning();
     this.act({ seat: this.activeSeatOf(playerId), type: 'play', cards });
   }
 
   pass(playerId) {
+    this.requireRunning();
     this.act({ seat: this.activeSeatOf(playerId), type: 'pass' });
   }
 
@@ -360,7 +515,10 @@ export class Room {
       ranking: ranking(this.hand), finished: this.hand.finished, captured: this.hand.captured,
     });
     this.match = match;
-    this.result = { handNo: match.handNo, ranking: ranking(this.hand), captured: this.hand.captured, ...result };
+    this.result = {
+      handNo: match.handNo, ranking: ranking(this.hand), captured: this.hand.captured, ...result,
+      remaining: this.hand.hands.map((h) => [...h]), // cards still held at the end, for the review
+    };
     const { lastAt, ...record } = this.handRecord;
     this.handLog.push({
       ...record,
@@ -407,6 +565,44 @@ export class Room {
     this.startHand();
   }
 
+  // ---- pause (host only) ---------------------------------------------------
+
+  // Freezes deadlines, timers and the deal clock; every player action gets 409 paused meanwhile.
+  pause(byId) {
+    this.requireHost(byId);
+    if (!PAUSABLE.includes(this.phase)) throw new HttpError(409, 'cannot_pause');
+    this.requireRunning();
+    const now = this.now();
+    this.paused = true;
+    this.pausedAt = now;
+    this.pausedRemaining = this.deadline === null ? null : Math.max(0, this.deadline - now);
+    this.clearTimer();
+    this.deadline = null; // deadlineSpan stays, so the countdown keeps its scale after resuming
+    this.say('房主暂停了游戏');
+    this.changed();
+  }
+
+  resume(byId) {
+    this.requireHost(byId);
+    if (!this.paused) throw new HttpError(409, 'not_paused');
+    const now = this.now();
+    if (this.dealing) {
+      // Shift the deal clock so no card was revealed while paused.
+      const shift = now - this.pausedAt;
+      this.dealing.startedAt += shift;
+      for (const seat of Object.keys(this.dealing.claimAt)) this.dealing.claimAt[seat] += shift;
+    }
+    if (this.pausedRemaining !== null) this.deadline = now + this.pausedRemaining;
+    Object.assign(this, { paused: false, pausedAt: null, pausedRemaining: null });
+    this.say('游戏继续');
+    this.schedule(true);
+    this.changed();
+  }
+
+  requireRunning() {
+    if (this.paused) throw new HttpError(409, 'paused');
+  }
+
   // ---- automatic actions ---------------------------------------------------
 
   isAutomatic(seat) {
@@ -414,27 +610,40 @@ export class Room {
     return p.isBot || p.leftEarly || !this.online.has(p.id);
   }
 
-  schedule() {
+  // `resumed`: keep the deadline restored by resume() instead of starting a fresh turn clock.
+  schedule(resumed = false) {
     this.clearTimer();
-    if (this.phase === 'returning') {
+    if (this.paused) return;
+    const untilDeadline = () => Math.max(0, this.deadline - this.now());
+    if (this.phase === 'dealing') {
+      const next = Math.min(this.deadline ?? this.dealEndAt(), ...(this.claimedBy === null ? Object.values(this.dealing.claimAt) : []));
+      this.setTimer(Math.max(0, next - this.now()), () => this.dealTick());
+    } else if (this.phase === 'tribute') {
+      this.setTimer(untilDeadline(), () => this.startReturns());
+    } else if (this.phase === 'returning') {
       const autoPending = this.returns.some((r) => r.card === null && this.isAutomatic(r.from));
-      const ms = autoPending ? this.delays.botMs : Math.max(0, this.deadline - this.now());
-      this.setTimer(ms, () => this.autoReturns(!autoPending));
+      if (autoPending) this.setTimer(this.delays.botMs, () => this.autoReturns(false));
+      else if (this.deadline !== null) this.setTimer(untilDeadline(), () => this.autoReturns(true));
+    } else if (this.phase === 'return_reveal') {
+      this.setTimer(untilDeadline(), () => this.beginPlay(this.revealHands));
     } else if (this.phase === 'playing') {
       const seat = this.hand.turn;
       if (this.isAutomatic(seat)) {
         this.setDeadline(null);
         this.setTimer(this.delays.botMs, () => this.autoPlay(seat, false));
+      } else if (this.noTimer()) {
+        this.setDeadline(null);
       } else {
-        this.setDeadline(this.turnMs());
-        this.setTimer(this.turnMs(), () => this.autoPlay(seat, true));
+        if (!resumed || this.deadline === null) this.setDeadline(this.turnMs());
+        this.setTimer(untilDeadline(), () => this.autoPlay(seat, true));
       }
     } else if (this.phase === 'hand_over') {
-      this.setTimer(Math.max(0, this.deadline - this.now()), () => this.advanceAfterHand());
+      this.setTimer(untilDeadline(), () => this.advanceAfterHand());
     }
   }
 
   autoReturns(everyone) {
+    if (this.phase !== 'returning') return;
     for (const r of this.returns) {
       if (r.card === null && (everyone || this.isAutomatic(r.from))) r.card = lowestCard(this.prepared.hands[r.from]);
     }
@@ -526,10 +735,14 @@ export class Room {
 
   viewFor(playerId) {
     const seat = this.players.findIndex((p) => p.id === playerId);
-    const inHand = this.phase !== 'lobby' && this.prepared;
+    const inHand = this.phase !== 'lobby' && Boolean(this.prepared || this.dealing);
+    const rounds = this.phase === 'dealing' ? this.dealRounds() : null;
     const handCards = (s) => {
-      if (this.phase === 'returning') return this.prepared.hands[s];
-      if (this.hand && this.prepared) return this.hand.hands[s];
+      // While dealing: only the cards revealed so far, in dealt order.
+      if (this.phase === 'dealing') return this.dealing.order[s].slice(0, rounds);
+      if (this.phase === 'tribute' || this.phase === 'returning') return this.prepared.hands[s];
+      if (this.phase === 'return_reveal') return this.revealHands[s];
+      if (this.hand) return this.hand.hands[s];
       return [];
     };
     const trick = this.phase === 'playing' && this.hand.trick
@@ -546,6 +759,15 @@ export class Room {
       decksChoice: this.decks,
       turnSeconds: Math.round(this.turnMs() / 1000),
       turnChoice: this.turnSeconds,
+      dealMode: this.dealMode,
+      paused: this.paused,
+      pausedRemaining: this.pausedRemaining,
+      dealRounds: rounds,
+      dealTotalRounds: this.phase === 'dealing' ? this.dealing.total : null,
+      dealStartedAt: this.phase === 'dealing' ? this.dealing.startedAt : null,
+      dealRoundMs: this.phase === 'dealing' ? this.delays.dealRoundMs : null,
+      claimedBy: this.claimedBy,
+      ready: [...this.ready].sort((a, b) => a - b),
       teams: this.match?.teams ?? null,
       handNo: this.match ? Math.min(this.match.handNo + (this.phase === 'hand_over' || this.phase === 'match_over' ? 0 : 1), HANDS_PER_MATCH) : 0,
       handsPerMatch: HANDS_PER_MATCH,
@@ -579,7 +801,7 @@ export class Room {
           given: this.prepared.tribute.given,
           returns: this.returns.map((r) => ({
             from: r.from, to: r.to, done: r.card !== null,
-            card: r.from === seat || r.to === seat ? r.card : null,
+            card: r.from === seat || r.to === seat || RETURNS_PUBLIC.includes(this.phase) ? r.card : null,
           })),
         }
         : null,

@@ -4,7 +4,7 @@ import { Room } from '../server/room.js';
 import { HttpError } from '../server/http.js';
 import { createHandState } from '../engine/game.js';
 
-const FAST = { turnMs: 5, returnMs: 5, botMs: 1, nextHandMs: 1 };
+const FAST = { turnMs: 5, returnMs: 5, botMs: 1, nextHandMs: 1, tributeMs: 1, returnRevealMs: 1, dealRoundMs: 1, claimGraceMs: 1 };
 
 function makeRoom(delays = FAST) {
   const changes = [];

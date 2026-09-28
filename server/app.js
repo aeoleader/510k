@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Hub } from './hub.js';
 import { HttpError, sendJson, sendError, readJson } from './http.js';
-import { parseCards, parseCard, parseName, parseCode, parseDecks, parseToken, parseTurnSeconds } from './validate.js';
+import { parseCards, parseCard, parseName, parseCode, parseDecks, parseToken, parseTurnSeconds, parseDealMode } from './validate.js';
 import { publicAccount } from './accounts.js';
 import { RateLimiter } from './limiter.js';
 import { Stats } from './stats.js';
@@ -163,10 +163,15 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
     '/api/rooms/set-decks': ({ room, player, body }) => room.setDecks(player.id, parseDecks(body.decks)),
     '/api/rooms/swap-seats': ({ room, player, body }) => room.swapSeats(player.id, String(body.a ?? ''), String(body.b ?? '')),
     '/api/rooms/set-turn-time': ({ room, player, body }) => room.setTurnSeconds(player.id, parseTurnSeconds(body.seconds)),
+    '/api/rooms/deal-mode': ({ room, player, body }) => room.setDealMode(player.id, parseDealMode(body.on)),
     '/api/rooms/start': ({ room, player }) => room.start(player.id),
     '/api/rooms/play': ({ room, player, body }) => room.play(player.id, parseCards(body.cards)),
     '/api/rooms/pass': ({ room, player }) => room.pass(player.id),
     '/api/rooms/return': ({ room, player, body }) => room.submitReturn(player.id, parseCard(body.card)),
+    '/api/rooms/claim-three': ({ room, player }) => room.claimThree(player.id),
+    '/api/rooms/ready': ({ room, player }) => room.markReady(player.id),
+    '/api/rooms/pause': ({ room, player }) => room.pause(player.id),
+    '/api/rooms/resume': ({ room, player }) => room.resume(player.id),
     '/api/rooms/next': ({ room, player }) => room.nextHand(player.id),
     '/api/rooms/restart': ({ room, player }) => room.restart(player.id),
   };

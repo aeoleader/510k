@@ -76,7 +76,8 @@ export class Stats {
       handNo: h.hand_no,
       leader: h.leader,
       initialHands: parse(h.initial_hands),
-      tribute: (({ pairs, resisted, given, returns }) => ({ pairs, resisted, given, returns }))(parse(h.tribute)),
+      // claimedBy: who showed the black 3 (dealing mode); matches stored before it existed have none.
+      tribute: (({ pairs, resisted, given, returns, claimedBy = null }) => ({ pairs, resisted, given, returns, claimedBy }))(parse(h.tribute)),
       result: parse(h.result),
       actions: this.q.actions.all(h.id).map((a) => ({
         seat: a.seat, type: a.type, cards: a.cards ? parse(a.cards) : undefined, auto: Boolean(a.auto), elapsedMs: a.elapsed_ms,

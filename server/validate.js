@@ -42,11 +42,16 @@ export function parseDecks(value) {
   return value;
 }
 
-export const TURN_SECONDS_CHOICES = [10, 15, 20, 30, 45, 60];
+export const TURN_SECONDS_CHOICES = [0, 10, 15, 20, 30, 45, 60]; // 0 = 不计时 (no limit)
 
 export function parseTurnSeconds(value) {
   if (value === null) return null; // null = server default
   if (!TURN_SECONDS_CHOICES.includes(value)) throw new HttpError(400, 'bad_turn_time');
+  return value;
+}
+
+export function parseDealMode(value) {
+  if (typeof value !== 'boolean') throw new HttpError(400, 'bad_deal_mode');
   return value;
 }
 
