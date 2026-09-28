@@ -18,9 +18,10 @@ const streams = [];
 
 before(async () => {
   accounts = new Accounts(openDatabase(':memory:'));
+  await accounts.register('Boss', 'secret1'); // admins must exist before the server starts
   ({ server } = createApp({
     publicDir: path.join(root, 'public'), engineDir: path.join(root, 'engine'), delays: FAST, accounts,
-    admins: ['Boss'], rateLimits: { register: { limit: 100, windowMs: 60_000 } },
+    admins: ['Boss', 'Ghost'], rateLimits: { register: { limit: 100, windowMs: 60_000 } },
   }));
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
@@ -218,17 +219,22 @@ test('accounts: a full rated match updates the rating and records the match', as
 });
 
 test('admin: only admins manage card counters, and counter data reaches only that player', async () => {
-  const boss = await post('/api/auth/register', { username: 'Boss', password: 'secret1' });
+  const boss = await post('/api/auth/login', { username: 'Boss', password: 'secret1' });
+  const ghost = await post('/api/auth/register', { username: 'Ghost', password: 'secret1' });
+  assert.equal((await post('/api/auth/me', { accountToken: ghost.accountToken })).isAdmin, false, 'registering a listed name later grants nothing');
   const counted = await post('/api/auth/register', { username: 'Counted', password: 'secret1' });
   assert.equal((await post('/api/auth/me', { accountToken: boss.accountToken })).isAdmin, true);
   assert.equal((await post('/api/admin/users', { accountToken: counted.accountToken, query: '' }, 403)).error, 'admin_only');
   assert.equal((await post('/api/admin/users', { query: '' }, 401)).error, 'login_required');
   const found = await post('/api/admin/users', { accountToken: boss.accountToken, query: 'count' });
   assert.deepEqual(found.users.map((u) => [u.username, u.cardCounter]), [['Counted', false]]);
+  const notReally = await post('/api/admin/card-counter', { accountToken: boss.accountToken, username: 'Counted', enabled: 'false' });
+  assert.equal(notReally.cardCounter, false, 'only a real true enables it');
   const set = await post('/api/admin/card-counter', { accountToken: boss.accountToken, username: 'Counted', enabled: true });
   assert.equal(set.cardCounter, true);
   const audit = (await post('/api/admin/users', { accountToken: boss.accountToken, query: '' })).audit;
   assert.deepEqual([audit[0].admin, audit[0].target, audit[0].action], ['Boss', 'Counted', 'card_counter_on']);
+  assert.equal((await post('/api/auth/register', { username: 'Me', password: 'secret1' }, 400)).error, 'bad_username');
 
   const host = await post('/api/rooms/create', { accountToken: counted.accountToken });
   const guest = await post('/api/rooms/join', { code: host.code, name: '路人' });

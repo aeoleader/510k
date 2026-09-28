@@ -14,7 +14,13 @@ function readToken() {
 }
 
 async function load() {
-  const name = decodeURIComponent(location.pathname.match(/^\/u\/([^/]+)$/)?.[1] ?? 'me');
+  let name;
+  try {
+    name = decodeURIComponent(location.pathname.match(/^\/u\/([^/]+)$/)?.[1] ?? 'me');
+  } catch {
+    $('status').textContent = '玩家地址不正确。';
+    return;
+  }
   const res = await fetch('/api/users/profile', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -50,6 +56,7 @@ function render(d) {
       </div>
       <div class="hero-figure"><span class="label">段位分</span><span class="value">${a.rating}</span></div>
     </section>
+    ${t.matches >= d.window ? `<p class="muted">统计范围：最近 ${d.window} 轮</p>` : ''}
     <section class="stat-tiles">${tiles.map(([label, value]) => `<div class="stat-tile"><span class="label">${label}</span><span class="value">${value}</span></div>`).join('')}</section>
     <section class="panel-block">
       <h2>段位分变化</h2>
@@ -99,7 +106,7 @@ function recentRow(m) {
         <div class="muted">${sides.map((side) => `${label(side)}`).join(' 对 ')}</div>
         <div class="hand-chips" aria-label="每局本方得分">${hands}</div>
         ${tags ? `<div class="tags">${tags}</div>` : ''}
-        <a class="btn btn-sm" href="/replay/${m.matchId}">看回放</a>
+        ${m.hasReplay ? `<a class="btn btn-sm" href="/replay/${m.matchId}">看回放</a>` : '<span class="muted">这一轮没有回放记录</span>'}
       </div>
     </details>`;
 }

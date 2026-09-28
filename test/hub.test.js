@@ -105,3 +105,15 @@ test('rate limiter allows the limit per window, then refuses', () => {
   limiter.prune();
   assert.equal(limiter.hits.size, 1);
 });
+
+test('refreshing one user pushes a view to that player only', () => {
+  const hub = new Hub({ delays: SLOW });
+  const { room, player } = hub.createRoom('甲', { id: 7 });
+  const other = room.addHuman('乙');
+  const writes = { mine: 0, theirs: 0 };
+  const fake = (key) => ({ write: () => { writes[key] += 1; }, end: () => {} });
+  hub.clients.set(room.code, new Map([[player.id, new Set([fake('mine')])], [other.id, new Set([fake('theirs')])]]));
+  hub.refreshUser(7);
+  assert.deepEqual(writes, { mine: 1, theirs: 0 });
+  hub.deleteRoom(room.code);
+});

@@ -12,6 +12,7 @@ export function findHighlights({ events, teams, decks, sweep = false, resisted =
   const out = [];
   const mark = (eventSeq, tag, seats, points = 0) => out.push({ eventSeq, tag, seats, points });
   let plays = [];
+  const autoRun = new Map(); // seat -> whether their previous action was automatic
 
   for (const e of events) {
     if (e.type === 'play') {
@@ -35,7 +36,11 @@ export function findHighlights({ events, teams, decks, sweep = false, resisted =
       }
       plays = [];
     }
-    if (e.auto) mark(e.seq, 'auto', [e.seat]);
+    if (e.type === 'play' || e.type === 'pass') {
+      // A run of automatic actions by one seat (timed out, offline) is one moment, tagged at its start.
+      if (e.auto && !autoRun.get(e.seat)) mark(e.seq, 'auto', [e.seat]);
+      autoRun.set(e.seat, Boolean(e.auto));
+    }
   }
   if (sweep) mark(-1, 'sweep', []);
   if (resisted) mark(-1, 'resisted', []);

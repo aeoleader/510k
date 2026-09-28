@@ -54,3 +54,15 @@ test('highlights: big bomb, steal, big trick, gift, team bomb, auto, sweep', () 
   const tags = findHighlights({ events, teams: [0, 1, 0, 1], decks: 2, sweep: true }).map((h) => h.tag);
   assert.deepEqual(tags.sort(), ['auto', 'big_bomb', 'big_trick', 'gift', 'gift', 'steal', 'sweep', 'team_bomb'].sort());
 });
+
+test('highlights: consecutive automatic actions by one seat are tagged once', () => {
+  const events = [
+    { seq: 0, type: 'play', seat: 0, cards: ['3S0'], combo: { cat: 0, type: 'single', level: 0 }, auto: true },
+    { seq: 1, type: 'pass', seat: 1, auto: false },
+    { seq: 2, type: 'pass', seat: 0, auto: true },
+    { seq: 3, type: 'pass', seat: 0, auto: false },
+    { seq: 4, type: 'pass', seat: 0, auto: true },
+  ];
+  const autos = findHighlights({ events, teams: [0, 1, 0, 1], decks: 2 }).filter((h) => h.tag === 'auto');
+  assert.deepEqual(autos.map((h) => h.eventSeq), [0, 4]);
+});

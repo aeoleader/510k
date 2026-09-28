@@ -27,6 +27,10 @@ function readToken() {
 
 async function load() {
   const id = Number(location.pathname.match(/^\/replay\/(\d+)$/)?.[1] ?? new URL(location.href).searchParams.get('id'));
+  if (!Number.isInteger(id)) {
+    $('status').textContent = '回放地址不正确。';
+    return;
+  }
   const res = await fetch('/api/matches/replay', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -39,6 +43,10 @@ async function load() {
     return;
   }
   state.data = payload;
+  if (!payload.hands.length) {
+    $('status').textContent = '这一轮没有回放记录（回放功能上线前打的对局，或记录不完整）。';
+    return;
+  }
   selectHand(0);
 }
 
@@ -86,6 +94,7 @@ function selectHand(i) {
   state.handIdx = i;
   state.hand = prepare(state.data.hands[i]);
   state.step = 0;
+  state.controlsFor = null; // rebuild the control bar for this hand
   render();
 }
 
@@ -236,27 +245,39 @@ function renderSide() {
       </button></li>`).join('')}</ol>` : '<p class="muted">这一局没有关键手。</p>'}`;
 }
 
+// The control bar is built once per hand; stepping only updates values, so a slider drag,
+// keyboard focus and hover survive autoplay.
 function renderControls() {
   const max = state.hand.states.length - 1;
-  const markers = state.hand.markers.map((m) => `<i class="marker tag-${m.tag}" style="left:${max ? (m.step / max) * 100 : 0}%" title="${TAGS[m.tag] ?? m.tag}"></i>`).join('');
+  if (state.controlsFor !== state.handIdx) {
+    state.controlsFor = state.handIdx;
+    const markers = state.hand.markers.map((m) => `<i class="marker tag-${m.tag}" style="left:${max ? (m.step / max) * 100 : 0}%" title="${TAGS[m.tag] ?? m.tag}"></i>`).join('');
+    $('controls').innerHTML = `
+      <div class="timeline">
+        <input id="scrub" type="range" min="0" max="${max}" value="0" aria-label="回放进度">
+        <div class="markers" aria-hidden="true">${markers}</div>
+      </div>
+      <div class="control-row">
+        <button type="button" class="btn btn-ghost btn-sm" data-go="prevLead">上一墩</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-go="prev">上一步</button>
+        <button type="button" class="btn btn-primary" data-go="toggle" id="playBtn">播放</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-go="next">下一步</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-go="nextLead">下一墩</button>
+        <span class="segmented" role="group" aria-label="播放速度">
+          ${[1, 2, 4].map((sp) => `<button type="button" data-speed="${sp}">${sp}×</button>`).join('')}
+        </span>
+        <span class="step-label" id="stepLabel"></span>
+      </div>`;
+  }
+  const scrub = $('scrub');
+  if (document.activeElement !== scrub || !scrubbing) scrub.value = String(state.step);
+  $('playBtn').textContent = state.playing ? '暂停' : '播放';
+  for (const b of document.querySelectorAll('[data-speed]')) b.setAttribute('aria-pressed', String(Number(b.dataset.speed) === state.speed));
   const action = state.step > 0 ? state.hand.actions[state.step - 1] : null;
-  $('controls').innerHTML = `
-    <div class="timeline">
-      <input id="scrub" type="range" min="0" max="${max}" value="${state.step}" aria-label="回放进度">
-      <div class="markers" aria-hidden="true">${markers}</div>
-    </div>
-    <div class="control-row">
-      <button type="button" class="btn btn-ghost btn-sm" data-go="prevLead">上一墩</button>
-      <button type="button" class="btn btn-ghost btn-sm" data-go="prev">上一步</button>
-      <button type="button" class="btn btn-primary" data-go="toggle">${state.playing ? '暂停' : '播放'}</button>
-      <button type="button" class="btn btn-ghost btn-sm" data-go="next">下一步</button>
-      <button type="button" class="btn btn-ghost btn-sm" data-go="nextLead">下一墩</button>
-      <span class="segmented" role="group" aria-label="播放速度">
-        ${[1, 2, 4].map((sp) => `<button type="button" data-speed="${sp}" aria-pressed="${state.speed === sp}">${sp}×</button>`).join('')}
-      </span>
-      <span class="step-label">${state.step} / ${max}${action ? `，用时 ${(action.elapsedMs / 1000).toFixed(1)} 秒` : ''}</span>
-    </div>`;
+  $('stepLabel').textContent = `${state.step} / ${max}${action ? `，用时 ${(action.elapsedMs / 1000).toFixed(1)} 秒` : ''}`;
 }
+
+let scrubbing = false;
 
 // ---- events --------------------------------------------------------------------------------
 
@@ -281,8 +302,12 @@ document.addEventListener('click', (e) => {
 });
 
 document.addEventListener('input', (e) => {
-  if (e.target.id === 'scrub') { stop(); go(Number(e.target.value)); }
+  if (e.target.id !== 'scrub') return;
+  scrubbing = true;
+  stop();
+  go(Number(e.target.value));
 });
+document.addEventListener('change', (e) => { if (e.target.id === 'scrub') scrubbing = false; });
 
 document.addEventListener('change', (e) => {
   if (e.target.id === 'viewSelect') { state.view = e.target.value; render(); }

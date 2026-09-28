@@ -6,6 +6,7 @@ import { cleanText } from './validate.js';
 import { START_RATING, rankInfo } from '../engine/rating.js';
 
 const MAX_USERNAME_LENGTH = 12;
+const RESERVED_USERNAMES = new Set(['me']); // /u/me means "my own profile"
 const MAX_PASSWORD_LENGTH = 64;
 export const MIN_NEW_PASSWORD_LENGTH = 6;
 const KEY_LENGTH = 32;
@@ -19,7 +20,9 @@ const DUMMY_SALT = crypto.randomBytes(16).toString('hex');
 
 export function parseUsername(value) {
   const name = cleanText(value);
-  if (!name || [...name].length > MAX_USERNAME_LENGTH || /\s/.test(name)) throw new HttpError(400, 'bad_username');
+  if (!name || [...name].length > MAX_USERNAME_LENGTH || /\s/.test(name) || RESERVED_USERNAMES.has(name.toLowerCase())) {
+    throw new HttpError(400, 'bad_username');
+  }
   return name;
 }
 

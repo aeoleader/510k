@@ -38,11 +38,17 @@ export class Hub {
     return this.counterCache.get(userId);
   }
 
-  // After an admin change: drop cached account data and push fresh views to rooms the user sits in.
+  // After an admin change: drop cached account data and push a fresh view to that player only,
+  // so nobody else at the table can notice that anything changed.
   refreshUser(userId) {
     this.accountCache.delete(userId);
     this.counterCache.delete(userId);
-    for (const room of this.rooms.values()) if (room.findByUser(userId)) this.broadcast(room);
+    for (const room of this.rooms.values()) {
+      const player = room.findByUser(userId);
+      if (!player) continue;
+      const view = room.viewFor(player.id);
+      for (const res of this.clients.get(room.code)?.get(player.id) ?? []) this.send(res, view);
+    }
   }
 
   accountView(userId) {

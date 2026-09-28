@@ -56,7 +56,14 @@ function roomPayload(room, player) {
 // admins: usernames (any case) allowed into /admin.
 // rateLimits: optional { login, register, rooms } overrides of { limit, windowMs } (tests use looser limits).
 export function createApp({ publicDir, engineDir, delays, timers, now, accounts = null, admins = [], rateLimits = {} } = {}) {
-  const adminNames = new Set(admins.map((a) => a.toLowerCase()));
+  // Admins are resolved to account ids once, at startup: a listed name that nobody has registered yet
+  // grants nothing (otherwise whoever registers it first would become admin).
+  const adminIds = new Set();
+  for (const name of admins) {
+    const user = accounts?.q.byName.get(name);
+    if (user && user.username === name) adminIds.add(user.id);
+    else console.warn(`ADMIN_USERS: no account named "${name}"; it gets no admin rights`);
+  }
   const hub = new Hub({ delays, timers, now, accounts });
   const stats = accounts ? new Stats(accounts.db) : null;
   // Password guessing and room spam are bounded per client IP (and per username for logins).
@@ -64,6 +71,7 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
     login: { limit: 10, windowMs: 60_000 },
     register: { limit: 5, windowMs: 10 * 60_000 },
     rooms: { limit: 30, windowMs: 10 * 60_000 },
+    reads: { limit: 60, windowMs: 60_000 }, // replays and profiles run many queries each
     ...rateLimits,
   };
   const limits = Object.fromEntries(Object.entries(limitSpec).map(([k, spec]) => [k, new RateLimiter({ ...spec, now })]));
@@ -81,7 +89,7 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
     requireAccounts();
     const user = userFor(body);
     if (!user) throw new HttpError(401, 'login_required');
-    if (!adminNames.has(user.username.toLowerCase())) throw new HttpError(403, 'admin_only');
+    if (!adminIds.has(user.id)) throw new HttpError(403, 'admin_only');
     return user;
   };
 
@@ -100,20 +108,22 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
     '/api/auth/me': (body) => {
       const user = requireAccounts().userForToken(body.accountToken);
       if (!user) throw new HttpError(401, 'session_expired');
-      return { account: publicAccount(user), isAdmin: adminNames.has(user.username.toLowerCase()) };
+      return { account: publicAccount(user), isAdmin: adminIds.has(user.id) };
     },
     '/api/auth/logout': (body) => {
       requireAccounts().logout(body.accountToken);
       return { ok: true };
     },
     // Replays and profiles are for signed-in players (spec 5.2).
-    '/api/matches/replay': (body) => {
+    '/api/matches/replay': (body, ip) => {
       requireAccounts();
+      limits.reads.hit(ip);
       if (!userFor(body)) throw new HttpError(401, 'login_required');
       return stats.replay(Number(body.matchId));
     },
-    '/api/users/profile': (body) => {
+    '/api/users/profile': (body, ip) => {
       requireAccounts();
+      limits.reads.hit(ip);
       const me = userFor(body);
       if (!me) throw new HttpError(401, 'login_required');
       const name = body.username === undefined || body.username === 'me' ? me.username : String(body.username);
@@ -125,7 +135,7 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
     },
     '/api/admin/card-counter': (body) => {
       const admin = requireAdmin(body);
-      const user = accounts.setCardCounter(admin, body.username, Boolean(body.enabled));
+      const user = accounts.setCardCounter(admin, body.username, body.enabled === true);
       hub.refreshUser(user.id);
       return { username: user.username, cardCounter: Boolean(user.card_counter) };
     },
