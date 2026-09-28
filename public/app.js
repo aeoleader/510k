@@ -365,16 +365,21 @@ function renderScoreboard(v) {
     const cls = n < v.handNo || (n === v.handNo && (v.phase === 'hand_over' || v.phase === 'match_over')) ? 'done' : n === v.handNo ? 'now' : '';
     return `<i class="${cls}"></i>`;
   }).join('');
+  // Totals cover finished hands; while a hand is being played, the points captured so far show as "本局 +N".
+  const live = v.phase === 'playing';
+  const handPts = (seats) => seats.reduce((sum, seat) => sum + (v.players[seat].captured ?? 0), 0);
+  const handTag = (pts) => (live ? `<span class="hand-pts" title="本局已收分，未计罚分">本局 +${pts}</span>` : '');
   let scores = '';
   if (v.totals && v.teams) {
     scores = [0, 1].map((team) => {
-      const names = v.players.filter((p) => v.teams[p.seat] === team).map((p) => p.name.replace(/\(机器人\)$/, '')).join('、');
-      return `<span class="team-score" style="--team-color: var(--team-${team})"><span class="num">${v.totals[team]}</span><span class="who">${esc(names)}</span></span>`;
+      const members = v.players.filter((p) => v.teams[p.seat] === team);
+      const names = members.map((p) => p.name.replace(/\(机器人\)$/, '')).join('、');
+      return `<span class="team-score" style="--team-color: var(--team-${team})"><span class="num">${v.totals[team]}</span>${handTag(handPts(members.map((p) => p.seat)))}<span class="who">${esc(names)}</span></span>`;
     }).join('');
   } else if (v.totals) {
     const leader = v.players.reduce((a, b) => (v.totals[b.seat] > v.totals[a.seat] ? b : a));
-    const mine = v.you ? v.totals[v.you.seat] : null;
-    scores = `<span class="team-score" style="--team-color: var(--accent)"><span class="num">${mine ?? 0}</span><span class="who">我的累计</span></span>
+    const mine = v.you ? v.you.seat : null;
+    scores = `<span class="team-score" style="--team-color: var(--accent)"><span class="num">${mine === null ? 0 : v.totals[mine]}</span>${mine === null ? '' : handTag(handPts([mine]))}<span class="who">我的累计</span></span>
       <span class="team-score" style="--team-color: var(--muted)"><span class="num">${v.totals[leader.seat]}</span><span class="who">领先 ${esc(leader.name.replace(/\(机器人\)$/, ''))}</span></span>`;
   }
   sb.innerHTML = `<span class="hand-label"><span class="long">第 </span>${v.handNo} / ${v.handsPerMatch}<span class="long"> 局</span></span><span class="hand-progress" aria-hidden="true">${dots}</span>${scores}`;

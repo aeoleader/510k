@@ -115,6 +115,7 @@ select { cursor: pointer; }
 }
 .team-score::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--team-color); align-self: center; }
 .team-score .num { font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.team-score .hand-pts { font-size: 12px; font-weight: 700; color: var(--accent-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .team-score .who { font-size: 12px; color: var(--muted); max-width: 14ch; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---- entry --------------------------------------------------------------------- */
@@ -667,6 +668,7 @@ select { cursor: pointer; }
   .room-code { letter-spacing: 2px; padding: 2px 8px; }
   .team-score { padding: 2px 8px; }
   .team-score .num { font-size: 15px; }
+  .team-score .hand-pts { font-size: 11px; }
   .seat { width: 70px; }
   .seat .avatar { --size: 32px; }
   .seat .name { font-size: 12px; }
