@@ -19,6 +19,9 @@ UMask=0077
 ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning /opt/510k-3200/server/index.js
 Restart=always
 RestartSec=2
+# On stop the server saves live rooms (well under a second) and exits 0; they are restored on the next start.
+KillSignal=SIGTERM
+TimeoutStopSec=20
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
