@@ -23,9 +23,10 @@
   <header class="topbar">
     <span class="wordmark">五十<b>K</b></span>
     <button id="roomBadge" type="button" class="room-code" title="复制邀请链接" hidden></button>
-    <span id="connection" class="connection" hidden>连接中断，正在重连</span>
+    <span id="connection" class="connection" role="status" hidden>重新连接中…</span>
     <div id="scoreboard" class="scoreboard" hidden></div>
     <span id="accountChip" class="account-chip" hidden></span>
+    <button id="pauseBtn" type="button" class="btn btn-ghost pause-btn" title="暂停游戏" aria-label="暂停游戏" hidden><span aria-hidden="true">❚❚</span><span class="long"> 暂停</span></button>
     <button id="rotateBtn" type="button" class="btn btn-ghost rotate-btn" hidden>横屏</button>
     <a class="rules-link" href="/rules.html" target="_blank" rel="noopener">规则</a>
   </header>

@@ -106,7 +106,12 @@ select { cursor: pointer; }
   font-variant-numeric: tabular-nums; letter-spacing: 4px; font-weight: 700;
   padding: 3px 10px 3px 14px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--muted);
 }
-.connection { color: var(--danger); font-size: 13px; }
+/* reconnecting: a small pill under the top bar that never blocks the table */
+.connection {
+  position: fixed; top: calc(var(--topbar-h) + 6px); left: 50%; transform: translateX(-50%); z-index: 15; pointer-events: none;
+  padding: 4px 14px; border-radius: 999px; white-space: nowrap; font-size: 13px;
+  color: #ffd9d4; background: rgba(58, 21, 18, 0.92); border: 1px solid rgba(239, 109, 97, 0.5); box-shadow: var(--shadow);
+}
 .rules-link { margin-left: auto; color: var(--muted); text-decoration: none; font-size: 14px; }
 .rules-link:hover { color: var(--text); }
 
@@ -1061,6 +1066,175 @@ html.rotated body {
 @media (pointer: coarse) {
   .rotate-btn { display: inline-flex; min-height: 30px; padding: 0 10px; font-size: 12px; }
 }
+
+/* ---- dealing, tribute, pause and the hand review ------------------------------------------------ */
+
+.card.xs { --w: 24px; border-radius: 4px; }
+.card.xs .big { display: none; }
+.card.xs .idx .r { letter-spacing: -0.5px; }
+.card-slot { display: inline-block; flex: none; width: 24px; height: 34px; border-radius: 4px; border: 1px dashed var(--line-strong); }
+.card-slot.md { width: 50px; height: 70px; border-radius: var(--radius-card); }
+
+/* lobby: 发牌模式 switch */
+.deal-mode .switch:disabled { cursor: default; opacity: 0.75; }
+.deal-state { font-size: 13px; color: var(--muted); min-width: 1em; }
+
+/* dealing: cards fly into the hand in dealt order, the deck counts rounds in the middle */
+.hand .card.deal-in { animation: deal-in 0.34s var(--ease) both; }
+@keyframes deal-in {
+  from { opacity: 0; transform: translateY(-120px) scale(0.55) rotate(-10deg); }
+  60% { opacity: 1; }
+}
+.deal-deck { display: inline-flex; align-items: center; gap: 12px; padding: 5px 14px 5px 10px; border-radius: 999px; background: rgba(0, 0, 0, 0.3); }
+.deck-stack { position: relative; width: 26px; height: 32px; }
+.deck-stack i {
+  position: absolute; top: 4px; left: 0; width: 20px; height: 28px; border-radius: 3px;
+  background: repeating-linear-gradient(45deg, #7a2d25 0 3px, #8f3a30 3px 6px); border: 1px solid #f1e6d2;
+}
+.deck-stack i:nth-child(2) { transform: translate(2px, -2px); }
+.deck-stack i:nth-child(3) { transform: translate(4px, -4px); }
+.deal-count { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.deal-count b { color: var(--text); font-size: 16px; }
+.deal-status { font-size: 14px; color: var(--text); }
+.deal-status b { color: var(--accent-2); }
+.btn.btn-claim {
+  min-height: 52px; padding: 0 30px; font-size: 20px; font-weight: 900; letter-spacing: 3px;
+  color: #fff; background: linear-gradient(135deg, #16161a, #3b3b46); border: 2px solid var(--accent);
+  animation: pulse-claim 0.9s ease-in-out infinite;
+}
+.btn.btn-claim:hover:not(:disabled) { border-color: var(--accent-2); }
+@keyframes pulse-claim { 50% { transform: scale(1.07); box-shadow: 0 0 0 8px rgba(240, 165, 58, 0.28), 0 0 28px rgba(240, 165, 58, 0.55); } }
+.fx-stamp-claim span {
+  color: #fff; background: linear-gradient(135deg, #111114, #34343d);
+  box-shadow: 0 0 0 3px var(--accent), 0 10px 36px rgba(0, 0, 0, 0.6); animation-duration: var(--stamp-ms, 1.3s);
+}
+.fx-stamp-resist span {
+  font-size: 32px; letter-spacing: 2px; color: var(--accent-ink); background: linear-gradient(135deg, #ffe3a8, var(--accent));
+  box-shadow: 0 10px 30px rgba(240, 165, 58, 0.45); animation-duration: var(--stamp-ms, 3s);
+}
+.fx-fly { z-index: 4; }
+.fx-fly .card { box-shadow: 0 0 0 2px var(--accent), 0 10px 24px rgba(0, 0, 0, 0.5); }
+
+/* tribute caption panel in the middle of the felt */
+.tribute-panel {
+  display: grid; gap: 6px; padding: 8px 12px; max-width: 100%;
+  border-radius: var(--radius-panel); background: rgba(6, 18, 14, 0.8); border: 1px solid rgba(240, 165, 58, 0.45);
+}
+.tribute-panel h3 { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: 3px; color: var(--accent-2); }
+.tribute-panel ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.tribute-panel li { display: flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; color: var(--muted); }
+.tribute-panel li b { color: var(--text); font-weight: 700; max-width: 5em; overflow: hidden; text-overflow: ellipsis; }
+.tribute-panel li .card, .tribute-panel li .card-slot { margin-left: auto; }
+.tp-wait { margin: 0; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 12px; color: var(--muted); line-height: 1.3; }
+.tp-wait b { color: var(--accent-2); }
+.timer.sm { width: 26px; height: 26px; font-size: 11px; flex: none; }
+.timer.big { width: 64px; height: 64px; font-size: 24px; flex: none; }
+
+/* the receiver's return dialog */
+.return-dialog { width: min(420px, 100%); border-color: var(--accent); box-shadow: 0 0 0 3px rgba(240, 165, 58, 0.25), var(--shadow); gap: 12px; }
+.rd-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.rd-cards { display: flex; align-items: flex-end; justify-content: center; gap: 18px; }
+.rd-cards figure { margin: 0; display: grid; justify-items: center; gap: 6px; }
+.rd-cards figcaption { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.rd-arrow { align-self: center; font-size: 22px; color: var(--accent-2); }
+.return-dialog p { font-size: 13px; }
+
+/* pause */
+.pause-btn { min-height: 32px; padding: 0 12px; font-size: 13px; white-space: nowrap; }
+.overlay.paused { background: rgba(3, 10, 8, 0.74); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+.pause-card {
+  display: grid; justify-items: center; gap: 12px; padding: 28px 40px; text-align: center;
+  border-radius: var(--radius-panel); background: var(--panel); border: 1px solid var(--line-strong); box-shadow: var(--shadow);
+}
+.pause-card h2 { margin: 0; font-size: 24px; }
+.pause-card p { margin: 0; color: var(--muted); font-size: 14px; }
+.pause-card .note { color: var(--muted); font-size: 13px; }
+.pause-icon { display: flex; gap: 8px; }
+.pause-icon i { width: 12px; height: 38px; border-radius: 3px; background: var(--accent); }
+
+/* hand review */
+.review-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.review-players { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.rv-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 6px 10px;
+  border-radius: 10px; background: var(--bg-2); border: 1px solid var(--line); border-left: 3px solid var(--team-color, var(--line-strong));
+}
+.rv-place { flex: none; min-width: 2.6em; font-size: 12px; font-weight: 800; color: var(--muted); }
+.rv-place.head { color: var(--accent-2); }
+.rv-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-name small { color: var(--muted); font-weight: 400; }
+.rv-pts { flex: none; order: 3; font-size: 13px; color: var(--muted); }
+.rv-pts b { color: var(--accent-2); font-size: 15px; }
+.rv-cards { order: 4; flex-basis: 100%; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rv-cards.out { order: 2; flex-basis: auto; font-size: 12px; color: var(--faint); }
+.rv-cards small { flex: none; font-size: 11px; color: var(--faint); }
+.rv-fan { min-width: 0; overflow: hidden; }
+.fan.rv-fan .card + .card { margin-left: calc(var(--step, 12px) - var(--w)); }
+.center-area .idle.small { font-size: 12px; }
+.ready-done { display: inline-flex; align-items: baseline; gap: 6px; color: var(--ok); font-weight: 700; white-space: nowrap; }
+.ready-done small { color: var(--muted); font-weight: 400; font-size: 12px; }
+.review-bar {
+  display: grid; gap: 6px; justify-items: center; padding: 8px 12px;
+  border-radius: var(--radius-panel); background: rgba(8, 22, 18, 0.92); border: 1px solid var(--accent); box-shadow: var(--shadow);
+}
+.rb-line { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; }
+.rb-title { font-weight: 700; }
+.review-bar .note { font-size: 12px; color: var(--muted); }
+.review-bar .btn { min-height: 34px; }
+
+@media (max-width: 560px) {
+  .fx-stamp-resist span { font-size: 24px; }
+  .btn.btn-claim { min-height: 48px; padding: 0 24px; font-size: 18px; }
+  .tribute-panel li { font-size: 12px; }
+  .pause-btn { min-height: 30px; padding: 0 9px; }
+  .review-bar { padding: 6px 8px; }
+  .review-bar .btn { padding: 0 10px; }
+  /* the host's pause button costs room: drop the wordmark and tighten the rest */
+  .topbar.with-pause { gap: 5px; padding: 0 8px; }
+  .topbar.with-pause .wordmark { display: none; }
+  .topbar.with-pause .room-code { letter-spacing: 1px; padding: 2px 6px; }
+  .topbar.with-pause .scoreboard { gap: 4px; }
+  .topbar.with-pause .team-score { padding: 2px 6px; gap: 4px; }
+  .topbar.with-pause .pause-btn { padding: 0 7px; }
+  .topbar.with-pause .rotate-btn { padding: 0 7px; }
+}
+
+html.landscape .fx-stamp-resist span { font-size: 26px; }
+html.landscape .btn.btn-claim { min-height: 40px; padding: 0 18px; font-size: 17px; grid-column: 1 / -1; }
+html.landscape .action-bar .status { grid-column: 1 / -1; }
+html.landscape .deal-deck { padding: 2px 10px 2px 6px; gap: 8px; }
+html.landscape .deck-stack { width: 20px; height: 24px; }
+html.landscape .deck-stack i { width: 15px; height: 21px; top: 3px; }
+html.landscape .deal-status { font-size: 12px; }
+html.landscape .tribute-panel { padding: 4px 10px; gap: 2px; }
+html.landscape .tribute-panel h3 { display: none; }
+html.landscape .tribute-panel ul { gap: 2px; }
+html.landscape .tribute-panel li { font-size: 11px; }
+html.landscape .tribute-panel .card.xs { --w: 20px; }
+html.landscape .tribute-panel .card-slot { width: 20px; height: 28px; }
+html.landscape .tp-wait { font-size: 11px; }
+html.landscape .timer.big { width: 44px; height: 44px; font-size: 17px; }
+html.landscape .return-dialog {
+  width: min(560px, 100%); grid-template-columns: auto minmax(0, 1fr); column-gap: 16px; row-gap: 6px;
+  grid-template-areas: "cards head" "cards text" "cards actions";
+}
+html.landscape .return-dialog .rd-cards { grid-area: cards; gap: 10px; }
+html.landscape .return-dialog .rd-head { grid-area: head; }
+html.landscape .return-dialog p { grid-area: text; font-size: 12px; line-height: 1.4; }
+html.landscape .return-dialog .actions { grid-area: actions; }
+html.landscape .rd-cards .card.md { --w: 44px; }
+html.landscape .card-slot.md { width: 44px; height: 62px; }
+html.landscape .pause-card { padding: 14px 26px; gap: 8px; }
+html.landscape .pause-card h2 { font-size: 18px; }
+html.landscape .pause-icon i { width: 8px; height: 24px; }
+html.landscape .pause-btn { min-height: 28px; padding: 0 10px; font-size: 12px; }
+html.landscape .review-players { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 6px; }
+html.landscape .rv-row { padding: 3px 8px; gap: 2px 8px; }
+html.landscape .rv-name { font-size: 12px; }
+html.landscape .rv-pts { font-size: 12px; }
+html.landscape .review-bar { padding: 4px 10px; gap: 4px; }
+html.landscape .review-bar .btn { min-height: 28px; }
+html.landscape .review-bar .rb-title { font-size: 12px; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }

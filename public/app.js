@@ -3,7 +3,7 @@ import { identify, beats } from '/engine/combos.js';
 import { sortBySize, sortBy510k, bombValues } from '/engine/sort.js';
 import { valueOf, isJoker } from '/engine/cards.js';
 import {
-  TYPE_LABEL, esc, initial, cardHtml as baseCardHtml, badgeHtml, fanHtml,
+  TYPE_LABEL, esc, initial, shortName, cardHtml as baseCardHtml, badgeHtml, fanHtml,
 } from '/ui.js';
 import { Effects } from '/effects.js';
 import { quickPicks, comboLabel } from '/engine/picks.js';
@@ -17,7 +17,15 @@ const ERROR_TEXT = {
   bad_login: '用户名或密码错误', session_expired: '登录已失效，请重新登录', accounts_disabled: '服务器未开启账号功能',
   short_password: '密码至少 6 位', too_many_attempts: '操作太频繁，请稍后再试', too_many_rooms: '你开的房间太多了，先关掉一些',
   server_busy: '服务器繁忙，请稍后再试', bad_turn_time: '不支持这个时长', left_match: '你已离开本轮，由机器人托管到本轮结束',
+  bad_deal_mode: '发牌模式设置无效', not_dealing: '发牌已经结束', paused: '房主已暂停，请稍候', already_claimed: '已经有人亮了黑3',
+  no_black_three: '你还没拿到黑桃 3', not_hand_over: '本局还没结束', cannot_pause: '现在不能暂停', not_paused: '游戏没有暂停',
+  name_in_use: '这个名字正在牌桌上使用中',
 };
+const SEAT_TAKEN_TEXT = '你的座位已在其他设备上重新加入';
+const PAUSABLE = ['dealing', 'tribute', 'returning', 'return_reveal', 'playing', 'hand_over'];
+const TRIBUTE_PHASES = ['tribute', 'returning', 'return_reveal'];
+const isBlackThree = (id) => id.startsWith('3S');
+const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const MAX_SEATS = 8;
 
 const $ = (id) => document.getElementById(id);
@@ -45,6 +53,7 @@ const state = {
   hintIndex: -1,
   events: null,
   online: true,
+  rejoining: false, // rejoining with a stored token while the server is unreachable
   accountToken: readPref('accountToken', null),
   account: null,
   entryMode: readPref('entryMode', 'guest'),
@@ -56,6 +65,10 @@ const state = {
   fxPrimed: false, // false until the first table render, so a reload does not replay old plays
   counterOpen: readPref('counterOpen', window.innerWidth >= 820 ? '1' : '0') === '1',
   forceLandscape: readPref('forceLandscape', '0') === '1',
+  dealDrawn: null, // { key, rounds, cards } last dealing progress drawn, so the deal loop redraws only on change
+  flip: null, // card positions before the post-deal sort, for the FLIP animation
+  reviewKey: null, // hand + phase the review collapse state belongs to
+  reviewCollapsed: false,
 };
 
 const BIG_TRICK_POINTS = 30;
@@ -89,17 +102,43 @@ async function api(path, body = {}) {
     body: JSON.stringify({ code: state.code, token: state.token, accountToken: state.accountToken ?? undefined, ...body }),
   });
   const payload = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(payload.error || 'error'), { code: payload.error });
+  if (!res.ok) throw Object.assign(new Error(payload.error || 'error'), { code: payload.error, status: res.status });
   return payload;
 }
+
+// A definitive "no" from the server (the token or room is not valid), as opposed to a network error,
+// a 5xx from a proxy while the server restarts, or rate limiting: those are worth retrying.
+const definitive = (err) => err.status >= 400 && err.status < 500 && err.status !== 429;
+// Reconnect backoff: 1 s, 2 s, 4 s, then every 5 s.
+const backoff = (attempt) => Math.min(5000, 1000 * 2 ** attempt);
 
 async function run(fn) {
   try {
     await fn();
   } catch (err) {
     if (err.code === 'session_expired') setAccount(null, null);
+    // Our room token stopped working: someone took the seat back on another device.
+    if (err.code === 'bad_token' && state.code) {
+      seatTaken();
+      return;
+    }
+    // No answer, or a 5xx while the server restarts: stay in the room and keep the selection.
+    if (!err.status || err.status >= 500) {
+      toast('网络不稳定，请重试');
+      return;
+    }
     toast(ERROR_TEXT[err.code] || '网络错误，请重试');
   }
+}
+
+// Drop the dead room token and go back to the join screen, keeping the room code ready to rejoin.
+function seatTaken() {
+  const code = state.code;
+  leaveRoomLocally();
+  state.invite = code;
+  $('codeInput').value = code;
+  renderEntry();
+  toast(SEAT_TAKEN_TEXT);
 }
 
 function setAccount(token, account) {
@@ -165,11 +204,24 @@ function enterRoom({ code, token }) {
   openEvents();
 }
 
-async function recoverRoom(es) {
+// The event stream was refused (not just dropped). Leave only on a definitive answer; while the server is
+// unreachable or restarting, keep the token and keep retrying with backoff.
+async function recoverRoom(es, attempt = 0) {
   if (state.events !== es) return;
+  const midMatch = state.view && state.view.phase !== 'lobby' && state.view.phase !== 'match_over';
   try {
     enterRoom(await api('/api/rooms/join', { code: state.code, token: state.token }));
-  } catch {
+  } catch (err) {
+    if (state.events !== es) return;
+    if (!definitive(err)) {
+      setTimeout(() => recoverRoom(es, attempt + 1), backoff(attempt));
+      return;
+    }
+    // Mid-match nobody is removed, so a rejected token there means the seat was taken back elsewhere.
+    if (err.code === 'bad_token' || (midMatch && err.code !== 'no_room')) {
+      seatTaken();
+      return;
+    }
     leaveRoomLocally();
     toast('房间已关闭或你已被移出');
   }
@@ -202,6 +254,8 @@ function openEvents() {
     const view = JSON.parse(msg.data);
     if (state.view && view.code === state.view.code && view.version < state.view.version) return;
     state.clockOffset = view.serverNow - Date.now();
+    // The deal just ended: remember where each card sat so the hand can slide into sorted order.
+    if (state.view?.phase === 'dealing' && view.phase !== 'dealing') state.flip = captureHand();
     const hand = new Set(view.you?.hand ?? []);
     for (const c of [...state.selected]) if (!hand.has(c)) state.selected.delete(c);
     state.view = view;
@@ -215,11 +269,31 @@ const playerAt = (seat) => state.view.players[seat];
 const teamOf = (seat) => (state.view.teams ? state.view.teams[seat] : null);
 const teamColor = (seat) => (teamOf(seat) === null ? '' : `--team-color: var(--team-${teamOf(seat)});`);
 
+// Null when nothing is timed (不计时, or no deadline); while paused the countdown stays frozen.
 function timeLeft() {
   const v = state.view;
-  if (!v?.deadline) return null;
-  const ms = Math.max(0, v.deadline - (Date.now() + state.clockOffset));
-  return { secs: Math.ceil(ms / 1000), fraction: v.deadlineSpan ? ms / v.deadlineSpan : 0 };
+  if (!v) return null;
+  let ms;
+  if (v.paused) {
+    if (v.pausedRemaining === null || v.pausedRemaining === undefined) return null;
+    ms = v.pausedRemaining;
+  } else {
+    if (!v.deadline) return null;
+    ms = Math.max(0, v.deadline - (Date.now() + state.clockOffset));
+  }
+  return { secs: Math.ceil(ms / 1000), fraction: v.deadlineSpan ? Math.min(1, ms / v.deadlineSpan) : 0 };
+}
+
+// Dealing progress, run locally from the deal clock between pushes. The hand only ever shows cards the
+// server already sent, so `cards` can lag `rounds` until the next push.
+function dealProgress(v) {
+  let rounds = v.dealRounds || 0;
+  if (!v.paused && v.dealStartedAt !== null && v.dealRoundMs) {
+    rounds = Math.max(rounds, Math.floor((Date.now() + state.clockOffset - v.dealStartedAt) / v.dealRoundMs));
+  }
+  rounds = Math.max(0, Math.min(v.dealTotalRounds || 0, rounds));
+  const known = v.you ? v.you.hand.length : 0;
+  return { rounds, cards: Math.min(known, rounds) };
 }
 
 function currentTop() {
@@ -261,11 +335,18 @@ function render() {
   $('roomBadge').textContent = state.code ?? '';
   renderConnection();
   renderAccountChip();
+  renderPauseButton(v);
   if (!inRoom) renderEntry();
   if (!v) {
     $('scoreboard').hidden = true;
     $('overlay').hidden = true;
     return;
+  }
+  // A new hand or phase opens the review expanded again.
+  const reviewKey = `${v.handNo}:${v.phase}`;
+  if (state.reviewKey !== reviewKey) {
+    state.reviewKey = reviewKey;
+    state.reviewCollapsed = false;
   }
   if (v.phase === 'lobby') {
     $('scoreboard').hidden = true;
@@ -276,6 +357,13 @@ function render() {
   }
   renderOverlay(v);
   tick();
+}
+
+function renderPauseButton(v) {
+  const show = Boolean(v && v.you?.isHost && !v.paused && PAUSABLE.includes(v.phase));
+  $('pauseBtn').hidden = !show;
+  // Narrow phones drop the wordmark to make room for the button.
+  document.querySelector('.topbar').classList.toggle('with-pause', show);
 }
 
 function renderAccountChip() {
@@ -326,7 +414,7 @@ function renderEntry() {
 }
 
 function renderConnection() {
-  $('connection').hidden = !state.code || state.online;
+  $('connection').hidden = !state.rejoining && (!state.code || state.online);
 }
 
 function renderLobby(v) {
@@ -388,10 +476,16 @@ function renderLobby(v) {
         <select id="decksSelect" ${isHost ? '' : 'disabled'}>${deckOptions}</select>
       </label>
       <label class="decks">出牌限时
-        <select id="turnSelect" ${isHost ? '' : 'disabled'}>${[null, 10, 15, 20, 30, 45, 60].map((sec) => `
-          <option value="${sec ?? ''}" ${v.turnChoice === sec ? 'selected' : ''}>${sec === null ? `默认 ${v.turnChoice === null ? v.turnSeconds : 15} 秒` : `${sec} 秒`}</option>`).join('')}
+        <select id="turnSelect" ${isHost ? '' : 'disabled'}>${[null, 10, 15, 20, 30, 45, 60, 0].map((sec) => `
+          <option value="${sec ?? ''}" ${v.turnChoice === sec ? 'selected' : ''}>${sec === null ? `默认 ${v.turnChoice === null ? v.turnSeconds : 15} 秒` : sec === 0 ? '不计时' : `${sec} 秒`}</option>`).join('')}
         </select>
       </label>
+      <span class="decks deal-mode">
+        <span id="dealModeLabel">发牌模式</span>
+        <button type="button" id="dealModeBtn" class="switch" role="switch" aria-checked="${v.dealMode}" aria-labelledby="dealModeLabel"
+          title="${isHost ? '每局一张张发牌，先亮黑桃 3 的人先出' : '只有房主可以更改'}" ${isHost ? '' : 'disabled'}><span class="knob"></span></button>
+        <span class="deal-state">${v.dealMode ? '开' : '关'}</span>
+      </span>
       <span class="note">${mode}${count >= 4 ? `，每人 ${perPlayer} 张${left ? `，余 ${left} 张给首家` : ''}` : ''}</span>
       <span class="spacer"></span>
       ${isHost ? `<button id="addBotBtn" class="btn" ${count >= MAX_SEATS ? 'disabled' : ''}>加机器人</button>` : ''}
@@ -410,7 +504,7 @@ function renderScoreboard(v) {
   // Totals cover finished hands; while a hand is being played, the points captured so far show as "本局 +N".
   const live = v.phase === 'playing';
   const handPts = (seats) => seats.reduce((sum, seat) => sum + (v.players[seat].captured ?? 0), 0);
-  const handTag = (pts) => (live ? `<span class="hand-pts" title="本局已收分，未计罚分">本局 +${pts}</span>` : '');
+  const handTag = (pts) => (live ? `<span class="hand-pts" title="本局已收分，未计罚分"><span class="long">本局 </span>+${pts}</span>` : '');
   let scores = '';
   if (v.totals && v.teams) {
     scores = [0, 1].map((team) => {
@@ -474,6 +568,9 @@ function renderTable(v) {
   const effects = [];
   const seats = [];
   const landscape = isLandscape();
+  const dealing = v.phase === 'dealing' ? dealProgress(v) : null;
+  state.dealDrawn = dealing ? { key: v.handNo, ...dealing } : null;
+  const cardCount = (p) => (dealing ? dealing.rounds : p.cards ?? 0);
   for (const p of v.players) {
     const isMe = p.id === v.you?.id;
     const { x, y } = landscape && isMe ? { x: 50, y: 100 } : seatPoint(p.seat, v);
@@ -482,7 +579,7 @@ function renderTable(v) {
     if (v.turn === p.seat) cls.push('is-turn');
     if (p.place) cls.push('is-out');
     if (!p.online) cls.push('is-offline');
-    const backs = p.cards ? Array.from({ length: Math.min(4, Math.ceil(p.cards / 7)) }, () => '<i></i>').join('') : '';
+    const backs = cardCount(p) ? Array.from({ length: Math.min(4, Math.ceil(cardCount(p) / 7)) }, () => '<i></i>').join('') : '';
     const badge = p.place
       ? `<span class="badge">${p.place === 1 ? '头游' : `第 ${p.place}`}</span>`
       : !p.online ? '<span class="badge muted">托管</span>' : '';
@@ -491,7 +588,7 @@ function renderTable(v) {
         <div class="ring" data-ring="${p.seat}">${avatarHtml(p)}${isMe ? '' : `<span class="backs">${backs}</span>`}${badge}</div>
         <div class="nameplate">
           <span class="name">${esc(p.name.replace(/\(机器人\)$/, ''))}${isMe ? '<span class="long">（你）</span>' : ''}</span>
-          <span class="stats"><span>${p.cards ?? 0} 张</span><span class="pts">${p.captured} 分</span></span>
+          <span class="stats"><span>${cardCount(p)} 张</span><span class="pts">${p.captured} 分</span></span>
           ${p.account ? badgeHtml(p.account, { compact: true }) : ''}
         </div>
       </div>`);
@@ -526,17 +623,23 @@ function renderTable(v) {
     }
     state.fxSeen.add(trick.id);
   }
+  effects.push(...phaseEffects(v));
   $('seats').innerHTML = seats.join('');
   state.fxPrimed = true;
   for (const run of effects) run();
 
   const t = v.trick;
   let center;
-  if (t) {
+  if (v.phase === 'dealing') {
+    center = dealCenter(v, dealing);
+  } else if (TRIBUTE_PHASES.includes(v.phase) && v.tribute) {
+    center = tributePanel(v);
+  } else if (v.phase === 'hand_over' || v.phase === 'match_over') {
+    const lastTrick = v.lastTrick ? `<span class="idle small">${esc(shortName(playerAt(v.lastTrick.seat).name))} 收下最后一墩 ${v.lastTrick.points} 分</span>` : '';
+    center = state.reviewCollapsed ? `${reviewBar(v)}${lastTrick}` : '<span class="idle">本局结束</span>';
+  } else if (t) {
     center = `<span class="points-pill">${t.points}<small>分在桌上</small></span>
       <span class="trick-label">${esc(playerAt(t.seat).name.replace(/\(机器人\)$/, ''))} 的 <b>${TYPE_LABEL[t.type] ?? ''}</b> 最大</span>`;
-  } else if (v.phase === 'returning') {
-    center = '<span class="idle">上贡完成，等待还贡</span>';
   } else if (v.lastTrick) {
     center = `<span class="idle">${esc(playerAt(v.lastTrick.seat).name.replace(/\(机器人\)$/, ''))} 收下 ${v.lastTrick.points} 分，重新出牌</span>`;
   } else {
@@ -546,10 +649,85 @@ function renderTable(v) {
   announceMyTurn(v);
   $('logTicker').innerHTML = [...v.log].slice(-3).reverse().map((l) => `<li>${esc(l.text)}</li>`).join('');
 
-  renderHand(v);
+  if (dealing) renderDealHand(v, dealing.cards);
+  else renderHand(v);
   renderActions(v);
   renderQuickPicks(v);
   renderCounter(v);
+}
+
+// Where a seat sits on the stage for effects; in landscape my own seat is the dock.
+function seatSpot(seat, v) {
+  if (isLandscape() && seat === v.you?.seat) return { x: 50, y: 96 };
+  return seatPoint(seat, v);
+}
+
+// One-off effects tied to the phase: the black 3 claim, tribute and return cards flying between seats,
+// and the 抗贡 stamp. Each runs once per hand; a reload marks them seen without playing them.
+function phaseEffects(v) {
+  const out = [];
+  const once = (key, fn) => {
+    if (state.fxSeen.has(key)) return;
+    state.fxSeen.add(key);
+    if (state.fxPrimed) out.push(fn);
+  };
+  const name = (seat) => esc(shortName(playerAt(seat).name));
+  if (v.claimedBy !== null && v.claimedBy !== undefined && v.phase !== 'lobby') {
+    once(`claim:${v.handNo}`, () => fx.stamp(`${name(v.claimedBy)} 亮黑3！`, 'claim'));
+  }
+  const t = v.tribute;
+  if (v.phase === 'tribute' && t && t.given.length) {
+    once(`tribute:${v.handNo}`, () => t.given.forEach((g, i) => fx.flyCard({
+      html: baseCardHtml(g.card, { size: 'md' }), from: seatSpot(g.from, v), to: seatSpot(g.to, v), delay: 300 + i * 450,
+    })));
+  }
+  if (v.phase === 'return_reveal' && t) {
+    once(`return:${v.handNo}`, () => t.returns.filter((r) => r.card).forEach((r, i) => fx.flyCard({
+      html: baseCardHtml(r.card, { size: 'md' }), from: seatSpot(r.from, v), to: seatSpot(r.to, v), delay: 200 + i * 350,
+    })));
+  }
+  // 抗贡 shows during the tribute phase; should play start without one, stamp it before anyone has played.
+  const fresh = v.phase === 'tribute' || (v.phase === 'playing' && !v.lastTrick && !Object.keys(v.seatActions).length);
+  if (t && t.resisted && fresh) {
+    once(`resist:${v.handNo}`, () => fx.stamp('抗贡：本局免贡', 'resist', 3000));
+  }
+  return out;
+}
+
+function dealCenter(v, d) {
+  const total = v.dealTotalRounds || 0;
+  let status = '';
+  if (v.claimedBy !== null && v.claimedBy !== undefined) {
+    status = `<span class="deal-status"><b>${esc(shortName(playerAt(v.claimedBy).name))}</b> 亮黑3，先出牌</span>`;
+  } else if (d.rounds >= total) {
+    status = '<span class="deal-status">发完了，谁有黑桃 3 快亮！</span>';
+  }
+  return `<div class="deal-deck"><span class="deck-stack" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span class="deal-count">发牌 <b>${d.rounds}</b> / ${total}</span></div>${status}`;
+}
+
+// Caption panel in the middle of the felt while tribute is given, returned and shown.
+function tributePanel(v) {
+  const t = v.tribute;
+  if (t.resisted) return '<div class="tribute-panel"><h3>抗贡</h3><p class="tp-wait">有人握有全部的王，本局免贡</p></div>';
+  if (!t.given.length) return '';
+  const name = (seat) => `<b>${esc(shortName(playerAt(seat).name))}</b>`;
+  const card = (id) => (id ? baseCardHtml(id, { size: 'xs' }) : '<span class="card-slot" aria-label="未公开"></span>');
+  let title;
+  let lines;
+  if (v.phase === 'return_reveal') {
+    title = '还贡';
+    lines = t.returns.map((r) => `<li>${name(r.from)} 还贡 ${name(r.to)} ${card(r.card)}</li>`);
+  } else {
+    title = '上贡';
+    lines = t.given.map((g) => `<li>${name(g.from)} → ${name(g.to)} 上贡 ${card(g.card)}</li>`);
+  }
+  let foot = '';
+  if (v.phase === 'returning') {
+    const waiting = t.returns.filter((r) => !r.done).map((r) => name(r.from));
+    if (waiting.length) foot = `<p class="tp-wait"><span class="timer sm" data-timer></span><span>等待 ${waiting.join('、')} 选牌还贡</span></p>`;
+  }
+  return `<div class="tribute-panel phase-${v.phase}"><h3>${title}</h3><ul>${lines.join('')}</ul>${foot}</div>`;
 }
 
 const COUNTER_RANKS = ['2', 'A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3'];
@@ -597,10 +775,32 @@ function announceMyTurn(v) {
   state.wasMyTurn = mine;
 }
 
+// Card width and overlap for a row of `widest` cards with `gaps` px of group spacing.
+function handSizing(area, widest, gaps) {
+  const baseWidth = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w')) || 64;
+  const available = Math.max(160, area.clientWidth - 24);
+  const { h } = viewport();
+  // Short hands get bigger cards (up to 35% larger) when the row has room; long ones keep the base size.
+  const roomy = (available - gaps) / (1 + 0.5 * (widest - 1));
+  // Landscape phones: size cards from the screen height (about a fifth of it), not the portrait base size.
+  const landscapeWidth = Math.round(Math.min(66, Math.max(46, (h * 0.2) / 1.4)));
+  const cardWidth = isLandscape() ? landscapeWidth : Math.round(Math.max(baseWidth, Math.min(baseWidth * 1.35, roomy)));
+  const step = Math.max(MIN_STEP, Math.min(cardWidth * 0.5, (available - gaps - cardWidth) / Math.max(1, widest - 1)));
+  area.style.setProperty('--pull', `${cardWidth - step}px`);
+  area.style.setProperty('--card-w', `${cardWidth}px`);
+}
+
+const twoRowHand = (count) => {
+  const { w, h } = viewport();
+  return w < 700 && h > LANDSCAPE_MAX_HEIGHT && count >= TWO_ROW_MIN_CARDS;
+};
+
 function renderHand(v) {
   const area = $('handArea');
+  delete area.dataset.deal;
   const hand = v.you?.hand ?? [];
   if (!hand.length) {
+    state.flip = null;
     area.innerHTML = `<div class="hand-empty">${v.phase === 'playing' ? '你已出完，等待本局结束' : ''}</div>`;
     return;
   }
@@ -610,28 +810,92 @@ function renderHand(v) {
     : [sortBySize(hand)];
   const cards = groups.flatMap((g) => g.map((c, i) => ({ id: c, groupStart: i === 0 })));
 
-  const baseWidth = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w')) || 64;
-  const available = Math.max(160, area.clientWidth - 24);
-  const { w, h } = viewport();
-  const twoRows = w < 700 && h > LANDSCAPE_MAX_HEIGHT && cards.length >= TWO_ROW_MIN_CARDS;
+  const twoRows = twoRowHand(cards.length);
   const rows = twoRows ? [cards.slice(0, Math.ceil(cards.length / 2)), cards.slice(Math.ceil(cards.length / 2))] : [cards];
   const widest = Math.max(...rows.map((r) => r.length));
   const gaps = Math.max(...rows.map((r) => r.filter((c, i) => i > 0 && c.groupStart).length)) * GROUP_GAP;
-  // Short hands get bigger cards (up to 35% larger) when the row has room; long ones keep the base size.
-  const roomy = (available - gaps) / (1 + 0.5 * (widest - 1));
-  // Landscape phones: size cards from the screen height (about a fifth of it), not the portrait base size.
-  const landscapeWidth = Math.round(Math.min(66, Math.max(46, (h * 0.2) / 1.4)));
-  const cardWidth = isLandscape() ? landscapeWidth : Math.round(Math.max(baseWidth, Math.min(baseWidth * 1.35, roomy)));
-  const step = Math.max(MIN_STEP, Math.min(cardWidth * 0.5, (available - gaps - cardWidth) / Math.max(1, widest - 1)));
+  handSizing(area, widest, gaps);
 
   const cardEl = ({ id, groupStart }, i) => {
     const html = cardHtml(id, { selectable: true, bomb: !isJoker(id) && bombs.has(valueOf(id)) });
     return i > 0 && groupStart ? html.replace('class="card', 'class="card gs') : html;
   };
   area.classList.toggle('two', twoRows);
-  area.style.setProperty('--pull', `${cardWidth - step}px`);
-  area.style.setProperty('--card-w', `${cardWidth}px`);
   area.innerHTML = rows.map((r) => `<div class="row">${r.map(cardEl).join('')}</div>`).join('');
+  if (state.flip) {
+    applyFlip(area, state.flip);
+    state.flip = null;
+  }
+}
+
+// While dealing: my cards in dealt order, face up. The layout is sized for the full hand up front, and new
+// cards are appended (not re-rendered) so each one's fly-in animation runs to the end.
+function renderDealHand(v, shown) {
+  const area = $('handArea');
+  const total = v.dealTotalRounds;
+  const twoRows = twoRowHand(total);
+  const split = twoRows ? Math.ceil(total / 2) : total;
+  const key = `${v.handNo}|${twoRows}|${total}|${isLandscape()}`;
+  let drawn = area.dataset.deal === key ? area.querySelectorAll('.card').length : -1;
+  if (drawn < 0 || drawn > shown) {
+    const again = area.dataset.deal && area.dataset.deal.split('|')[0] === String(v.handNo);
+    handSizing(area, split, 0);
+    area.classList.toggle('two', twoRows);
+    area.innerHTML = twoRows ? '<div class="row"></div><div class="row"></div>' : '<div class="row"></div>';
+    area.dataset.deal = key;
+    // A relayout (rotation) redraws what was already dealt without flying it in again.
+    drawn = 0;
+    if (again || !state.fxPrimed) appendDealCards(area, v.you.hand.slice(0, shown), 0, split, false);
+    else appendDealCards(area, v.you.hand.slice(0, shown), 0, split, true, v.dealRoundMs);
+    return;
+  }
+  if (shown > drawn) appendDealCards(area, v.you.hand.slice(drawn, shown), drawn, split, true, v.dealRoundMs);
+}
+
+function appendDealCards(area, cards, from, split, animate, roundMs = 120) {
+  const rows = area.querySelectorAll('.row');
+  // Cards that arrive together (a late push) still come in one after another.
+  const stagger = Math.min(roundMs, 45);
+  cards.forEach((id, k) => {
+    const i = from + k;
+    const row = rows[i < split ? 0 : 1] || rows[0];
+    const html = baseCardHtml(id).replace('class="card', `data-deal="${id}" class="card${animate ? ' deal-in' : ''}`);
+    row.insertAdjacentHTML('beforeend', html);
+    if (animate) row.lastElementChild.style.animationDelay = `${k * stagger}ms`;
+  });
+}
+
+// Screen positions of the cards in my hand, keyed by card id.
+function captureHand() {
+  const map = new Map();
+  for (const el of document.querySelectorAll('#handArea .card')) {
+    map.set(el.dataset.card || el.dataset.deal, el.getBoundingClientRect());
+  }
+  return map;
+}
+
+// FLIP: start each card where it sat before (dealt order) and slide it into its sorted place.
+function applyFlip(area, before) {
+  if (reducedMotion() || !before.size) return;
+  const rotated = document.documentElement.classList.contains('rotated');
+  for (const el of area.querySelectorAll('.card')) {
+    if (typeof el.animate !== 'function') return;
+    const from = before.get(el.dataset.card);
+    const to = el.getBoundingClientRect();
+    let frames;
+    if (from) {
+      const sx = from.left - to.left;
+      const sy = from.top - to.top;
+      // The rotated page turns screen offsets by 90 degrees.
+      const dx = rotated ? sy : sx;
+      const dy = rotated ? -sx : sy;
+      frames = [{ transform: `translate(${dx}px, ${dy}px)`, opacity: 1 }, { transform: 'translate(0px, 0px)', opacity: 1 }];
+    } else {
+      // Cards that were not in the dealt hand (the leftover) drop in.
+      frames = [{ transform: 'translate(0px, -40px)', opacity: 0 }, { transform: 'translate(0px, 0px)', opacity: 1 }];
+    }
+    el.animate(frames, { duration: 600, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' });
+  }
 }
 
 // Tap toggles a card; pressing and sliding across cards applies the same choice to each.
@@ -683,7 +947,8 @@ function myInfoHtml(v) {
   if (!isLandscape() || !v.you) return '';
   const me = v.players[v.you.seat];
   const place = me.place ? `<b class="place">${me.place === 1 ? '头游' : `第 ${me.place}`}</b>` : '';
-  return `<span class="my-info">${esc(me.name.replace(/\(机器人\)$/, ''))} ${me.cards ?? 0} 张 <span class="pts">${me.captured} 分</span>${place}</span>`;
+  const count = v.phase === 'dealing' ? dealProgress(v).rounds : me.cards ?? 0;
+  return `<span class="my-info">${esc(me.name.replace(/\(机器人\)$/, ''))} ${count} 张 <span class="pts">${me.captured} 分</span>${place}</span>`;
 }
 
 function renderQuickPicks(v) {
@@ -724,34 +989,103 @@ function renderActions(v) {
       <button id="playBtn" class="btn btn-primary" ${canPlay ? '' : 'disabled'}>出牌${combo ? ` · ${TYPE_LABEL[combo.type]}` : ''}</button>`;
   } else if (v.phase === 'playing' && v.turn >= 0) {
     main = `<span class="spacer"></span><span class="status">等待 ${esc(playerAt(v.turn).name.replace(/\(机器人\)$/, ''))} 出牌</span>`;
+  } else if (v.phase === 'dealing') {
+    main = `<span class="spacer"></span>${dealAction(v)}`;
   }
   const clear = state.selected.size ? '<button id="clearBtn" class="btn btn-ghost btn-sm">取消选择</button>' : '';
   $('actionBar').innerHTML = `${sort}${main}${clear}`;
 }
 
+// The 亮黑3 button shows once a spade 3 has reached my hand and nobody has claimed yet.
+function dealAction(v) {
+  const d = dealProgress(v);
+  const me = v.you ? v.players[v.you.seat] : null;
+  const claimed = v.claimedBy !== null && v.claimedBy !== undefined;
+  const mine = v.you ? v.you.hand.slice(0, d.cards).some(isBlackThree) : false;
+  if (!claimed && mine && me && !me.leftEarly && !v.paused) {
+    return '<button id="claimBtn" type="button" class="btn btn-claim">亮黑3</button>';
+  }
+  if (claimed) return `<span class="status">${esc(shortName(playerAt(v.claimedBy).name))} 亮了黑3</span>`;
+  if (v.deadline) return '<span class="timer" data-timer></span><span class="status">没人亮黑3 就随机先出</span>';
+  return '<span class="status">发牌中…</span>';
+}
+
 function renderOverlay(v) {
   const overlay = $('overlay');
   let html = '';
+  let mode = '';
   const mustReturn = v.phase === 'returning' && v.you && v.you.mustReturnTo !== null;
-  if (mustReturn) {
-    const to = playerAt(v.you.mustReturnTo);
-    const one = state.selected.size === 1 ? [...state.selected][0] : null;
+  if (v.paused) {
+    mode = 'paused';
     html = `
-      <div class="dialog">
-        <h2>还一张牌给 ${esc(to.name.replace(/\(机器人\)$/, ''))}</h2>
-        <p>对方刚向你上贡。从下方手牌里点一张还给他，超时会自动还最小的一张。</p>
-        <div class="actions">
-          <span class="timer" data-timer></span>
-          <span class="note">${one ? '已选 1 张' : '还没选牌'}</span>
-          <button id="returnBtn" class="btn btn-primary" ${one ? '' : 'disabled'}>还这张</button>
-        </div>
+      <div class="pause-card" role="dialog" aria-label="房主已暂停">
+        <span class="pause-icon" aria-hidden="true"><i></i><i></i></span>
+        <h2>房主已暂停</h2>
+        <p>计时已停住，继续后接着打。</p>
+        ${v.you?.isHost ? '<button id="resumeBtn" type="button" class="btn btn-primary">继续游戏</button>' : '<span class="note">等待房主继续</span>'}
       </div>`;
-  } else if (v.phase === 'hand_over' || v.phase === 'match_over') {
+  } else if (mustReturn) {
+    mode = 'passive';
+    html = returnDialog(v);
+  } else if ((v.phase === 'hand_over' || v.phase === 'match_over') && !state.reviewCollapsed) {
+    // Collapsed, the review shrinks to a bar in the middle of the felt (see renderTable).
     html = resultDialog(v);
   }
   overlay.hidden = !html;
   overlay.innerHTML = html;
-  overlay.classList.toggle('passive', Boolean(mustReturn));
+  overlay.classList.toggle('passive', mode === 'passive');
+  overlay.classList.toggle('paused', mode === 'paused');
+}
+
+// The receiver picks one card to give back: the tribute they got, the card picked so far, a big countdown.
+function returnDialog(v) {
+  const to = playerAt(v.you.mustReturnTo);
+  const got = v.tribute ? v.tribute.given.find((g) => g.to === v.you.seat && g.from === v.you.mustReturnTo) : null;
+  const one = state.selected.size === 1 ? [...state.selected][0] : null;
+  const timed = Boolean(v.deadline) || (v.paused && v.pausedRemaining !== null);
+  const toName = esc(shortName(to.name));
+  return `
+    <div class="dialog return-dialog" role="dialog" aria-label="还贡">
+      <div class="rd-head">
+        <h2>还一张牌给 ${toName}</h2>
+        ${timed ? '<span class="timer big" data-timer></span>' : ''}
+      </div>
+      <div class="rd-cards">
+        ${got ? `<figure><figcaption>${toName} 上贡给你</figcaption>${baseCardHtml(got.card, { size: 'md' })}</figure>
+        <span class="rd-arrow" aria-hidden="true">⇄</span>` : ''}
+        <figure><figcaption>${one ? '你要还' : '还没选牌'}</figcaption>${one ? baseCardHtml(one, { size: 'md' }) : '<span class="card-slot md"></span>'}</figure>
+      </div>
+      <p>从下方手牌里点一张还给 ${toName}${timed ? '，超时会自动还最小的一张' : ''}。</p>
+      <div class="actions">
+        <button id="returnBtn" class="btn btn-primary" ${one ? '' : 'disabled'}>还这张</button>
+      </div>
+    </div>`;
+}
+
+// Humans the next hand waits on (online, not left) and how many of them are ready.
+function readyCount(v) {
+  const waiting = v.players.filter((p) => !p.isBot && p.online && !p.leftEarly);
+  return { ready: waiting.filter((p) => v.ready.includes(p.seat)).length, of: waiting.length };
+}
+
+function readyControls(v) {
+  if (v.phase !== 'hand_over' || !v.you) return '';
+  const me = v.players[v.you.seat];
+  if (me.leftEarly) return '';
+  if (!v.ready.includes(v.you.seat)) return '<button id="readyBtn" type="button" class="btn btn-primary">准备好了</button>';
+  const c = readyCount(v);
+  return `<span class="ready-done">✓ 已准备<small>等待其他人 ${c.ready}/${c.of}</small></span>`;
+}
+
+function reviewBar(v) {
+  const over = v.phase === 'match_over';
+  const timed = !over && (Boolean(v.deadline) || (v.paused && v.pausedRemaining !== null));
+  return `
+    <div class="review-bar" role="region" aria-label="本局复盘">
+      <div class="rb-line"><span class="rb-title">${over ? '本轮结束' : `第 ${v.result.handNo} 局结束`}</span>
+      ${timed ? '<span class="note">下一局 <span data-secs></span> 秒</span>' : ''}</div>
+      <div class="rb-line">${readyControls(v)}<button id="reviewToggleBtn" type="button" class="btn btn-sm">展开复盘</button></div>
+    </div>`;
 }
 
 function resultDialog(v) {
@@ -773,7 +1107,6 @@ function resultDialog(v) {
       <span class="delta ${x.hand > 0 ? 'pos' : ''}">本局 ${x.hand > 0 ? '+' : ''}${x.hand}</span>
       <span class="total">${x.total}</span>
     </div>`).join('');
-  const order = r ? r.ranking.map((seat) => `<span>${short(playerAt(seat))}</span>`).join('') : '';
   const penalties = (r?.penalties ?? []).map((p) => `${label(p.from)} 有人没出完，罚 ${p.amount} 分`).join('；');
   const title = over ? '本轮结束' : `第 ${r.handNo} 局结束`;
   const mine = over && v.ratings && v.you ? v.ratings[v.you.seat] : null;
@@ -784,20 +1117,45 @@ function resultDialog(v) {
          ${badgeHtml(v.you.account)}
        </div>`
     : '<div class="rating-change">游客或机器人不计段位</div>';
+  const timed = !over && (Boolean(v.deadline) || (v.paused && v.pausedRemaining !== null));
   return `
-    <div class="dialog" role="dialog" aria-label="${title}">
-      <h2>${title}${r?.sweep ? ' <span class="sweep">完胜</span>' : ''}</h2>
+    <div class="dialog review" role="dialog" aria-label="${title}">
+      <div class="review-head">
+        <h2>${title}${r?.sweep ? ' <span class="sweep">完胜</span>' : ''}</h2>
+        <button id="reviewToggleBtn" type="button" class="btn btn-ghost btn-sm" title="收起，看看牌桌">收起</button>
+      </div>
       <div class="standings">${standings}</div>
-      ${order ? `<div class="finish-order" aria-label="出完顺序">${order}</div>` : ''}
+      ${r ? reviewPlayers(v, r) : ''}
       ${penalties ? `<div class="penalty">${penalties}</div>` : ''}
       ${ratingLine}
       <div class="actions">
         ${over && v.matchId && state.account ? `<a class="btn" href="/replay/${v.matchId}" target="_blank" rel="noopener">看回放</a>` : ''}
         ${over
           ? (v.you?.isHost ? '<button id="restartBtn" class="btn btn-primary">回到大厅</button>' : '<span class="note">等待房主操作</span>')
-          : `<span class="note">下一局 <span data-secs></span> 秒后开始</span>${v.you?.isHost ? '<button id="nextBtn" class="btn btn-primary">马上开始</button>' : ''}`}
+          : `${timed ? '<span class="note">下一局 <span data-secs></span> 秒后开始</span>' : '<span class="note">大家准备好就开始下一局</span>'}${readyControls(v)}${v.you?.isHost ? '<button id="nextBtn" class="btn">马上开始</button>' : ''}`}
       </div>
     </div>`;
+}
+
+// Overlap for the review's small fans, so even a full hand fits one line.
+const fanStep = (n) => Math.max(5, Math.min(14, Math.floor(200 / Math.max(1, n - 1))));
+
+// Per player: finish place, points captured this hand, and the cards still held (face up).
+function reviewPlayers(v, r) {
+  const place = new Map((r.ranking || []).map((seat, i) => [seat, i + 1]));
+  const rows = [...v.players].sort((a, b) => (place.get(a.seat) || 99) - (place.get(b.seat) || 99)).map((p) => {
+    const n = place.get(p.seat);
+    const left = r.remaining ? r.remaining[p.seat] || [] : [];
+    const out = !left.length;
+    return `
+      <li class="rv-row" style="${teamColor(p.seat)}">
+        <span class="rv-place ${n === 1 ? 'head' : ''}">${n === 1 ? '头游' : n ? `第 ${n}` : ''}</span>
+        <span class="rv-name">${esc(shortName(p.name))}${p.seat === v.you?.seat ? '<small>（你）</small>' : ''}</span>
+        <span class="rv-pts">收 <b>${r.captured ? r.captured[p.seat] : 0}</b> 分</span>
+        <span class="rv-cards ${out ? 'out' : ''}">${out ? '已出完' : `<span class="fan rv-fan" style="--step:${fanStep(left.length)}px">${left.map((c) => baseCardHtml(c, { size: 'xs' })).join('')}</span><small>${left.length} 张</small>`}</span>
+      </li>`;
+  }).join('');
+  return `<ul class="review-players" aria-label="本局复盘">${rows}</ul>`;
 }
 
 // Countdown visuals update between server pushes.
@@ -805,6 +1163,8 @@ function tick() {
   const left = timeLeft();
   const v = state.view;
   for (const el of document.querySelectorAll('[data-timer]')) {
+    // No deadline (不计时, or nothing timed right now): no countdown at all.
+    el.hidden = !left;
     el.textContent = left ? left.secs : '';
     el.style.setProperty('--p', left ? left.fraction : 0);
   }
@@ -815,6 +1175,17 @@ function tick() {
   }
 }
 setInterval(tick, 200);
+
+// While dealing, redraw whenever the local deal clock reveals another round (between server pushes).
+setInterval(() => {
+  const v = state.view;
+  if (!v || v.phase !== 'dealing' || v.paused || !state.dealDrawn) return;
+  const d = dealProgress(v);
+  if (d.rounds !== state.dealDrawn.rounds || d.cards !== state.dealDrawn.cards) {
+    renderTable(v);
+    tick();
+  }
+}, 40);
 
 // ---- events ---------------------------------------------------------------------------
 
@@ -891,6 +1262,17 @@ document.addEventListener('click', (e) => {
     case 'startBtn': run(() => api('/api/rooms/start')); break;
     case 'leaveBtn': run(async () => { await api('/api/rooms/leave'); leaveRoomLocally(); }); break;
     case 'nextBtn': run(() => api('/api/rooms/next')); break;
+    case 'readyBtn': run(() => api('/api/rooms/ready')); break;
+    case 'claimBtn': run(() => api('/api/rooms/claim-three')); break;
+    case 'pauseBtn': run(() => api('/api/rooms/pause')); break;
+    case 'resumeBtn': run(() => api('/api/rooms/resume')); break;
+    case 'dealModeBtn':
+      if (state.view) run(() => api('/api/rooms/deal-mode', { on: !state.view.dealMode }));
+      break;
+    case 'reviewToggleBtn':
+      state.reviewCollapsed = !state.reviewCollapsed;
+      render();
+      break;
     case 'restartBtn': run(() => api('/api/rooms/restart')); break;
     case 'clearBtn': state.selected.clear(); render(); break;
     case 'rotateBtn': toggleLandscape(); break;
@@ -962,12 +1344,35 @@ if (state.accountToken) {
     if (err.code === 'session_expired') setAccount(null, null);
   });
 }
+// Back into the room with the token this tab stored. If the server cannot be reached (it may be restarting),
+// keep the token and retry; only a definitive answer drops it.
+function bootJoin(code, token, attempt = 0) {
+  state.rejoining = true;
+  renderConnection();
+  api('/api/rooms/join', { code, token }).then((res) => {
+    state.rejoining = false;
+    enterRoom(res);
+  }).catch((err) => {
+    if (!definitive(err)) {
+      setTimeout(() => bootJoin(code, token, attempt + 1), backoff(attempt));
+      return;
+    }
+    state.rejoining = false;
+    state.invite = code;
+    writeSession(`token:${code}`, null);
+    // A guest token that stopped working falls through to a nameless join (bad_name).
+    const gone = err.code === 'bad_token' || err.code === 'bad_name';
+    toast(gone ? '你的座位已失效，可能已在其他设备上重新加入' : ERROR_TEXT[err.code] || '网络错误，请重试');
+    render();
+  });
+}
+
 const roomFromUrl = new URL(location.href).searchParams.get('room');
 if (roomFromUrl) {
   const code = roomFromUrl.toUpperCase();
   $('codeInput').value = code;
   const token = readSession(`token:${code}`);
-  if (token) run(async () => enterRoom(await api('/api/rooms/join', { code, token })));
+  if (token) bootJoin(code, token);
   else state.invite = code;
 }
 render();

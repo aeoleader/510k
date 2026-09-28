@@ -48,8 +48,24 @@ export class Effects {
     this.spawn(`fx-ring fx-ring-${kind}`, { x, y, ms: 1200 + delay, vars: { '--delay': `${delay}ms` } });
   }
 
-  stamp(text, kind) {
-    this.spawn(`fx-stamp fx-stamp-${kind}`, { html: `<span>${text}</span>`, ms: kind === 'king' ? 1900 : 1400 });
+  // ms: how long the stamp stays; longer stamps get a matching CSS animation length.
+  stamp(text, kind, ms = kind === 'king' ? 1900 : 1400) {
+    this.spawn(`fx-stamp fx-stamp-${kind}`, { html: `<span>${text}</span>`, ms, vars: { '--stamp-ms': `${ms - 100}ms` } });
+  }
+
+  // A card flies from one seat to another (tribute and returns), positions in percent of the stage.
+  // Driven by the Web Animations API; with reduced motion it is skipped (the caption panel says it all).
+  flyCard({ html, from, to, delay = 0, ms = 1100 }) {
+    if (reducedMotion()) return;
+    const el = this.spawn('fx-fly', { x: from.x, y: from.y, html, ms: delay + ms + 100 });
+    if (typeof el.animate !== 'function') {
+      el.remove();
+      return;
+    }
+    const at = (p, scale, opacity, offset) => ({ left: `${p.x}%`, top: `${p.y}%`, transform: `translate(-50%, -50%) scale(${scale})`, opacity, offset });
+    el.animate([at(from, 0.6, 0, 0), at(from, 1, 1, 0.12), at(to, 1.15, 1, 0.75), at(to, 1, 0, 1)], {
+      duration: ms, delay, easing: 'cubic-bezier(0.45, 0, 0.25, 1)', fill: 'both',
+    });
   }
 
   // A play landed at (x, y), in percent of the table stage.
