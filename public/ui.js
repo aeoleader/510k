@@ -21,7 +21,8 @@ export function cardHtml(id, { size = '', selectable = false, selected = false, 
   if (isJoker(id)) {
     const big = id[0] === 'B';
     cls.push('joker', big ? 'big-j' : 'small-j');
-    inner = `<span class="idx"><span class="r">${big ? '大王' : '小王'}</span></span><span class="big">J</span>`;
+    // Two stacked characters rather than vertical writing-mode, which some phone fonts collapse into one glyph.
+    inner = `<span class="idx"><span class="r"><i>${big ? '大' : '小'}</i><i>王</i></span></span><span class="big">J</span>`;
   } else {
     if (id[1] === 'H' || id[1] === 'D') cls.push('red');
     const r = RANK_LABEL[id[0]] ?? id[0];

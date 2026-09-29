@@ -1064,6 +1064,13 @@ export class Room {
       deadlineSpan: this.deadlineSpan,
       trick,
       seatActions: this.phase === 'playing' ? this.seatActions : {},
+      // Every play, pass and won trick of this hand so far, for the play log panel (all of it was public on the felt).
+      plays: ['playing', 'hand_over', 'match_over'].includes(this.phase) ? this.events.flatMap((e) => {
+        if (e.type === 'play') return [{ seat: e.seat, cards: e.cards, type: e.combo.type, auto: Boolean(e.auto) }];
+        if (e.type === 'pass') return [{ seat: e.seat, pass: true, auto: Boolean(e.auto) }];
+        if (e.type === 'trick') return [{ seat: e.seat, trick: true, points: e.points }];
+        return [];
+      }) : [],
       lastTrick: this.lastTrick,
       tribute: this.prepared && this.phase !== 'lobby'
         ? {
