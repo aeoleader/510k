@@ -13,8 +13,10 @@ A separate, LAN-only copy of the game with its own accounts and matches.
    - Path: `Share/docker/510k`
    - Source: *Use existing docker-compose.yml* (it finds `compose.yaml`)
    - Skip the Web Station portal step. Create — it builds the image and starts the container.
-3. Open `http://<NAS IP>:3200` on the home network. Register `aeoleader` to get `/admin`
-   (set by `ADMIN_USERS` in `compose.yaml`).
+3. Open `http://<NAS IP>:3200` on the home network.
+4. Admin: register `aeoleader` (listed in `ADMIN_USERS` in `compose.yaml`), then **Stop** and
+   **Start** the project once. Admin names are matched to existing accounts only when the server
+   starts, so a name nobody has registered yet grants nothing.
 
 ## Update
 
