@@ -74,7 +74,7 @@ test('delays passed without the new keys fall back to the defaults', () => {
   assert.deepEqual(
     [DEFAULT_DELAYS.turnMs, DEFAULT_DELAYS.returnMs, DEFAULT_DELAYS.botMs, DEFAULT_DELAYS.nextHandMs, DEFAULT_DELAYS.tributeMs,
       DEFAULT_DELAYS.returnRevealMs, DEFAULT_DELAYS.dealRoundMs, DEFAULT_DELAYS.claimGraceMs],
-    [15000, 30000, 700, 30000, 7000, 5000, 120, 3000],
+    [15000, 30000, 700, 30000, 20000, 20000, 120, 3000],
   );
 });
 
@@ -266,6 +266,49 @@ test('tribute is public, then returns stay private until return_reveal, then pla
   room.destroy();
 });
 
+test('tribute and return reveals move on once every present human confirms; confirmations do not carry over', () => {
+  const { room, clock, host, people } = setup({ online: ['甲', '乙', '丙'] }); // 丁 is offline
+  room.start(host.id);
+  tributeHand(room);
+  assert.equal(room.phase, 'tribute');
+  assert.deepEqual(room.viewFor(host.id).readyWaiting, { ready: 0, needed: 3 });
+  room.markReady(host.id);
+  room.markReady(people[1].id);
+  assert.equal(room.phase, 'tribute', 'waits for everyone present');
+  assert.deepEqual(room.viewFor(host.id).readyWaiting, { ready: 2, needed: 3 });
+  room.markReady(people[2].id);
+  assert.equal(room.phase, 'returning', 'the offline player is not waited on');
+  assert.equal(code(() => room.markReady(host.id)), 'not_hand_over', 'nothing to confirm while returning');
+  room.submitReturn(host.id, room.prepared.hands[0][0]);
+  room.submitReturn(people[2].id, room.prepared.hands[2][0]);
+  assert.equal(room.phase, 'return_reveal');
+  assert.deepEqual(room.viewFor(host.id).ready, [], 'the tribute confirmations were cleared');
+  for (const p of people.slice(0, 3)) room.markReady(p.id);
+  assert.equal(room.phase, 'playing');
+  assert.deepEqual(room.viewFor(host.id).ready, [], 'nobody starts the hand review already ready');
+  room.destroy();
+});
+
+test('tribute and return reveals fall back to 20 s by default when nobody confirms', () => {
+  const { tributeMs, returnRevealMs, ...others } = DELAYS; // leave the reveal times at their defaults
+  const { room, clock, host, people } = setup({ online: ['甲', '乙', '丙', '丁'], delays: others });
+  assert.equal(DEFAULT_DELAYS.tributeMs, 20000);
+  assert.equal(DEFAULT_DELAYS.returnRevealMs, 20000);
+  room.start(host.id);
+  tributeHand(room);
+  clock.advance(19999);
+  assert.equal(room.phase, 'tribute');
+  clock.advance(1);
+  assert.equal(room.phase, 'returning');
+  room.submitReturn(host.id, room.prepared.hands[0][0]);
+  room.submitReturn(people[2].id, room.prepared.hands[2][0]);
+  clock.advance(19999);
+  assert.equal(room.phase, 'return_reveal');
+  clock.advance(1);
+  assert.equal(room.phase, 'playing');
+  room.destroy();
+});
+
 test('不计时: an online human is never timed out; an offline one is auto-played', () => {
   const { room, clock, host, people } = setup({ online: ['甲', '乙', '丙', '丁'] });
   room.setTurnSeconds(host.id, 0);
@@ -409,7 +452,8 @@ test('hand review: remaining cards, ready set, all ready starts the next hand ea
   room.markReady(people[1].id);
   assert.ok(['tribute', 'playing'].includes(room.phase), 'everyone ready: the next hand starts');
   assert.deepEqual(room.viewFor(host.id).ready, []);
-  assert.equal(code(() => room.markReady(host.id)), 'not_hand_over');
+  // The new hand's tribute reveal takes confirmations of its own; plain play does not.
+  assert.equal(code(() => room.markReady(host.id)), room.phase === 'tribute' ? null : 'not_hand_over');
   room.destroy();
 });
 

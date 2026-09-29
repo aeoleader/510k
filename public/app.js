@@ -18,7 +18,7 @@ const ERROR_TEXT = {
   short_password: '密码至少 6 位', too_many_attempts: '操作太频繁，请稍后再试', too_many_rooms: '你开的房间太多了，先关掉一些',
   server_busy: '服务器繁忙，请稍后再试', bad_turn_time: '不支持这个时长', left_match: '你已离开本轮，由机器人托管到本轮结束',
   bad_deal_mode: '发牌模式设置无效', not_dealing: '发牌已经结束', paused: '房主已暂停，请稍候', already_claimed: '已经有人亮了黑3',
-  no_black_three: '你还没拿到黑桃 3', not_hand_over: '本局还没结束', cannot_pause: '现在不能暂停', not_paused: '游戏没有暂停',
+  no_black_three: '你还没拿到黑桃 3', not_hand_over: '现在不需要确认', cannot_pause: '现在不能暂停', not_paused: '游戏没有暂停',
   name_in_use: '这个名字正在牌桌上使用中',
 };
 const SEAT_TAKEN_TEXT = '你的座位已在其他设备上重新加入';
@@ -721,7 +721,7 @@ function dealCenter(v, d) {
 // Caption panel in the middle of the felt while tribute is given, returned and shown.
 function tributePanel(v) {
   const t = v.tribute;
-  if (t.resisted) return '<div class="tribute-panel"><h3>抗贡</h3><p class="tp-wait">有人握有全部的王，本局免贡</p></div>';
+  if (t.resisted) return `<div class="tribute-panel"><h3>抗贡</h3><p class="tp-wait">有人握有全部的王，本局免贡</p>${confirmControls(v)}</div>`;
   if (!t.given.length) return '';
   const name = (seat) => `<b>${esc(shortName(playerAt(seat).name))}</b>`;
   const card = (id) => (id ? baseCardHtml(id, { size: 'xs' }) : '<span class="card-slot" aria-label="未公开"></span>');
@@ -734,7 +734,7 @@ function tributePanel(v) {
     title = '上贡';
     lines = t.given.map((g) => `<li>${name(g.from)} → ${name(g.to)} 上贡 ${card(g.card)}</li>`);
   }
-  let foot = '';
+  let foot = confirmControls(v);
   if (v.phase === 'returning') {
     const waiting = t.returns.filter((r) => !r.done).map((r) => name(r.from));
     if (waiting.length) foot = `<p class="tp-wait"><span class="timer sm" data-timer></span><span>等待 ${waiting.join('、')} 选牌还贡</span></p>`;
@@ -1178,6 +1178,18 @@ function readyCount(v) {
   if (v.readyWaiting) return { ready: v.readyWaiting.ready, of: v.readyWaiting.needed };
   const waiting = v.players.filter((p) => !p.isBot && p.online && !p.leftEarly);
   return { ready: waiting.filter((p) => v.ready.includes(p.seat)).length, of: waiting.length };
+}
+
+// Tribute and return reveals wait until everyone has confirmed they saw who gave whom which card.
+function confirmControls(v) {
+  if ((v.phase !== 'tribute' && v.phase !== 'return_reveal') || !v.you) return '';
+  const timer = v.deadline ? '<span class="timer sm" data-timer></span>' : '';
+  const c = readyCount(v);
+  if (v.players[v.you.seat].leftEarly) return `<p class="tp-wait">${timer}<span>等待大家确认 ${c.ready}/${c.of}</span></p>`;
+  if (!v.ready.includes(v.you.seat)) {
+    return `<p class="tp-wait tp-confirm">${timer}<button id="readyBtn" type="button" class="btn btn-primary btn-sm">确认</button></p>`;
+  }
+  return `<p class="tp-wait">${timer}<span>✓ 已确认，等待其他人 ${c.ready}/${c.of}</span></p>`;
 }
 
 function readyControls(v) {

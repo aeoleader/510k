@@ -13,7 +13,8 @@ import { HttpError } from './http.js';
 
 export const DEFAULT_DELAYS = {
   turnMs: 15000, returnMs: 30000, botMs: 700, nextHandMs: 30000,
-  tributeMs: 7000, returnRevealMs: 5000, // long enough to read who gave whom which card
+  // Tribute and return reveals wait for every present human to confirm; this is only the fallback.
+  tributeMs: 20000, returnRevealMs: 20000,
   dealRoundMs: 120, claimGraceMs: 3000,
   restoreGraceMs: 20000, // after a server restart, humans count as present this long so they can reconnect
   reclaimOfflineMs: 30000, // a guest seat that is only offline may be taken back by name after this long
@@ -28,6 +29,7 @@ const PHASES = ['lobby', 'dealing', 'tribute', 'returning', 'return_reveal', 'pl
 const PAUSABLE = ['dealing', 'tribute', 'returning', 'return_reveal', 'playing', 'hand_over'];
 // From these phases on, returned cards are public.
 const RETURNS_PUBLIC = ['return_reveal', 'playing', 'hand_over', 'match_over'];
+const CONFIRM_PHASES = ['tribute', 'return_reveal', 'hand_over']; // phases that wait for everyone's confirmation
 const isBlackThree = (id) => id.startsWith('3S');
 const LOG_LIMIT = 40;
 const BOT_NAMES = ['小白', '阿福', '老K', '十点', '五哥', '炸弹王', '顺子', '对子'];
@@ -75,7 +77,7 @@ export class Room {
     this.dealing = null; // { order, startedAt, total, claimAt: { seat: ms }, ended } during `dealing`
     this.claimedBy = null; // seat that showed the black 3 this hand
     this.revealHands = null; // hands after every return, played from once `return_reveal` ends
-    this.ready = new Set(); // seats ready for the next hand during `hand_over`
+    this.ready = new Set(); // seats that confirmed the tribute / return reveal, or are ready for the next hand
     this.paused = false;
     this.pausedAt = null;
     this.pausedRemaining = null; // ms left on the deadline when the host paused
@@ -182,7 +184,7 @@ export class Room {
     this.passHost(playerId);
     this.say(`${player.name} 离开了牌桌，由机器人托管到本轮结束`);
     this.schedule();
-    if (this.readyToAdvance()) return this.advanceAfterHand();
+    if (this.readyToAdvance()) return this.advanceReady();
     this.changed();
   }
 
@@ -220,7 +222,7 @@ export class Room {
     if (isOnline) this.offlineSince.delete(playerId);
     else this.offlineSince.set(playerId, this.now());
     if (this.waitsOn(playerId) || this.paused) this.schedule(); // paused: re-check whether the host is away
-    if (this.readyToAdvance()) return this.advanceAfterHand();
+    if (this.readyToAdvance()) return this.advanceReady();
     this.changed();
   }
 
@@ -315,22 +317,29 @@ export class Room {
     this.advanceAfterHand();
   }
 
-  // hand_over: a player is done reviewing. The next hand starts once every online human is ready.
+  // A player confirms the tribute or return reveal, or is done reviewing the hand. The room moves on once
+  // every present human has, or at the phase deadline.
   markReady(playerId) {
-    this.requirePhase('hand_over', 'not_hand_over');
+    if (!CONFIRM_PHASES.includes(this.phase)) throw new HttpError(409, 'not_hand_over');
     this.requireRunning();
     this.ready.add(this.activeSeatOf(playerId));
-    if (this.readyToAdvance()) return this.advanceAfterHand();
+    if (this.readyToAdvance()) return this.advanceReady();
     this.changed();
   }
 
   readyToAdvance() {
-    if (this.phase !== 'hand_over' || this.paused) return false;
+    if (!CONFIRM_PHASES.includes(this.phase) || this.paused) return false;
     const waiting = this.readyWaiting();
     return waiting.length > 0 && waiting.every((seat) => this.ready.has(seat));
   }
 
-  // Seats the next hand waits on: humans still in the match who are present.
+  advanceReady() {
+    if (this.phase === 'tribute') return this.startReturns();
+    if (this.phase === 'return_reveal') return this.beginPlay(this.revealHands);
+    return this.advanceAfterHand();
+  }
+
+  // Seats the room waits on: humans still in the match who are present.
   readyWaiting() {
     return this.players.flatMap((p, seat) => (!p.isBot && !p.leftEarly && this.isPresent(p) ? [seat] : []));
   }
@@ -446,6 +455,7 @@ export class Room {
     this.returns = this.prepared.pendingReturns.map((r) => ({ ...r, card: null }));
     if (!tribute.given.length && !tribute.resisted) return this.beginPlay(this.prepared.hands);
     this.phase = 'tribute'; // everyone watches the tribute cards move, or sees 抗贡 announced
+    this.ready = new Set();
     this.setDeadline(this.delays.tributeMs);
     this.schedule();
     this.changed();
@@ -478,12 +488,14 @@ export class Room {
     }
     this.revealHands = completeReturns(this.prepared, this.returns.map(({ from, to, card }) => ({ from, to, card })));
     this.phase = 'return_reveal'; // returned cards become public
+    this.ready = new Set();
     this.setDeadline(this.delays.returnRevealMs);
     this.schedule();
     this.changed();
   }
 
   beginPlay(hands) {
+    this.ready = new Set(); // confirmations of the reveals do not carry over to the hand review
     this.hand = createHandState({
       hands, teams: this.match.teams, leader: this.prepared.leader, decks: this.match.decks,
     });
@@ -655,7 +667,7 @@ export class Room {
     if (this.pausedRemaining !== null) this.deadline = now + this.pausedRemaining;
     Object.assign(this, { paused: false, pausedAt: null, pausedRemaining: null });
     this.say('游戏继续');
-    if (this.readyToAdvance()) return this.advanceAfterHand(); // everyone got ready while paused
+    if (this.readyToAdvance()) return this.advanceReady(); // everyone got ready while paused
     this.schedule(true);
     this.changed();
   }
@@ -956,7 +968,7 @@ export class Room {
       this.graceUntil = null;
       try {
         if (this.paused) return;
-        if (this.readyToAdvance()) return this.advanceAfterHand();
+        if (this.readyToAdvance()) return this.advanceReady();
         if (this.phase === 'playing' || this.phase === 'returning') {
           this.schedule(true);
           this.changed();
@@ -1036,7 +1048,7 @@ export class Room {
       claimedBy: this.claimedBy,
       ready: [...this.ready].sort((a, b) => a - b),
       // Who the next hand waits on, by the same rule as readyToAdvance() (the restore grace counts offline humans).
-      readyWaiting: this.phase === 'hand_over'
+      readyWaiting: CONFIRM_PHASES.includes(this.phase)
         ? ((seats) => ({ ready: seats.filter((s) => this.ready.has(s)).length, needed: seats.length }))(this.readyWaiting())
         : null,
       teams: this.match?.teams ?? null,
