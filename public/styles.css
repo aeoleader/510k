@@ -1080,6 +1080,12 @@ html.landscape .dialog h2 { font-size: 16px; }
 html.landscape .standings { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 html.landscape .standing { padding: 6px 10px; gap: 8px; }
 html.landscape .standing .total { font-size: 18px; }
+/* two standings side by side leave little room: the hand delta moves under the names so names stay whole */
+html.landscape .standing { grid-template-columns: auto minmax(0, 1fr) auto; row-gap: 0; }
+html.landscape .standing .rank { grid-row: 1 / span 2; }
+html.landscape .standing .names { grid-column: 2; grid-row: 1; }
+html.landscape .standing .delta { grid-column: 2; grid-row: 2; font-size: 14px; }
+html.landscape .standing .total { grid-column: 3; grid-row: 1 / span 2; }
 html.landscape .rating-change { padding: 6px 10px; }
 
 /* forced landscape on a phone held upright (iOS cannot lock orientation): rotate the whole app */
@@ -1242,8 +1248,8 @@ html.landscape .tribute-panel { padding: 4px 10px; gap: 2px; }
 html.landscape .tribute-panel h3 { display: none; }
 html.landscape .tribute-panel ul { gap: 2px; }
 html.landscape .tribute-panel li { font-size: 11px; }
-html.landscape .tribute-panel .card.xs { --w: 20px; }
-html.landscape .tribute-panel .card-slot { width: 20px; height: 28px; }
+html.landscape .tribute-panel .card.xs { --w: 30px; }
+html.landscape .tribute-panel .card-slot { width: 30px; height: 42px; }
 html.landscape .tp-wait { font-size: 11px; }
 html.landscape .timer.big { width: 44px; height: 44px; font-size: 17px; }
 html.landscape .return-dialog {
@@ -1328,6 +1334,21 @@ html.landscape .review-bar .rb-title { font-size: 12px; }
 @media (pointer: coarse) {
   .btn-sm { min-height: 40px; }
 }
+
+/* tribute and return: the cards in the caption panel are big enough to read */
+.tribute-panel .card.xs { --w: 36px; }
+.tribute-panel .card-slot { width: 36px; height: 50px; }
+.tribute-panel li { gap: 10px; }
+/* a card that came in through tribute or its return is marked 新 until the first play */
+.card.got { box-shadow: 0 0 0 2px var(--ok), 0 2px 6px rgba(0, 0, 0, 0.3); }
+.card.got::before {
+  content: "新"; position: absolute; top: -9px; left: 2px; z-index: 1;
+  padding: 0 5px; border-radius: 999px; font: 800 12px/18px "PingFang SC", sans-serif;
+  background: var(--ok); color: #06210f;
+}
+.hand .card.got.selected { box-shadow: 0 0 0 2px var(--accent), 0 10px 18px rgba(0, 0, 0, 0.4); }
+/* hand review: full names (they wrap rather than cut off) */
+.standing .names span { white-space: normal; overflow: visible; line-height: 1.3; }
 
 /* play log: a button on the felt opens a floating panel with every play of this hand */
 /* the top bar's backdrop blur makes it a stacking context: lift it over the felt (below overlays at 10)
@@ -1416,6 +1437,7 @@ html.landscape .play-log { top: 4px; right: max(8px, var(--safe-r)); max-height:
 html.landscape .pl-list .card.sm { --w: 28px; }
 html.landscape .tribute-panel li { font-size: 13px; }
 html.landscape .rv-name { font-size: 14px; }
+html.landscape .rv-name small { display: none; } /* the name matters more than （你） in a half-width row */
 html.landscape .rv-pts { font-size: 13px; }
 html.landscape .review-bar .rb-title { font-size: 14px; }
 

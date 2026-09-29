@@ -13,7 +13,8 @@ import { HttpError } from './http.js';
 
 export const DEFAULT_DELAYS = {
   turnMs: 15000, returnMs: 30000, botMs: 700, nextHandMs: 30000,
-  tributeMs: 5000, returnRevealMs: 3000, dealRoundMs: 120, claimGraceMs: 3000,
+  tributeMs: 7000, returnRevealMs: 5000, // long enough to read who gave whom which card
+  dealRoundMs: 120, claimGraceMs: 3000,
   restoreGraceMs: 20000, // after a server restart, humans count as present this long so they can reconnect
   reclaimOfflineMs: 30000, // a guest seat that is only offline may be taken back by name after this long
   hostAwayMs: 60000, // while paused, a host offline this long hands the host role to an online human

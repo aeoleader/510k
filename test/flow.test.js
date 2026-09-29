@@ -74,7 +74,7 @@ test('delays passed without the new keys fall back to the defaults', () => {
   assert.deepEqual(
     [DEFAULT_DELAYS.turnMs, DEFAULT_DELAYS.returnMs, DEFAULT_DELAYS.botMs, DEFAULT_DELAYS.nextHandMs, DEFAULT_DELAYS.tributeMs,
       DEFAULT_DELAYS.returnRevealMs, DEFAULT_DELAYS.dealRoundMs, DEFAULT_DELAYS.claimGraceMs],
-    [15000, 30000, 700, 30000, 5000, 3000, 120, 3000],
+    [15000, 30000, 700, 30000, 7000, 5000, 120, 3000],
   );
 });
 

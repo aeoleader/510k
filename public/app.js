@@ -887,6 +887,20 @@ const twoRowHand = (count) => {
   return w < 700 && h > LANDSCAPE_MAX_HEIGHT && count >= TWO_ROW_MIN_CARDS;
 };
 
+// Cards that came into my hand through tribute (上贡 to me) or its return (还贡 to me), marked 新 until I first play,
+// so it is easy to see what changed in the hand.
+function receivedCards(v) {
+  const t = v.tribute;
+  const me = v.you?.seat;
+  if (!t || me === undefined || !['tribute', 'returning', 'return_reveal', 'playing'].includes(v.phase)) return new Set();
+  if (v.phase === 'playing' && (v.plays || []).some((p) => p.seat === me && !p.trick)) return new Set();
+  const ids = [
+    ...t.given.filter((g) => g.to === me).map((g) => g.card),
+    ...t.returns.filter((r) => r.to === me && r.card).map((r) => r.card),
+  ];
+  return new Set(ids.filter((id) => v.you.hand.includes(id)));
+}
+
 function renderHand(v) {
   const area = $('handArea');
   delete area.dataset.deal;
@@ -908,8 +922,10 @@ function renderHand(v) {
   const gaps = Math.max(...rows.map((r) => r.filter((c, i) => i > 0 && c.groupStart).length)) * GROUP_GAP;
   handSizing(area, widest, gaps);
 
+  const got = receivedCards(v);
   const cardEl = ({ id, groupStart }, i) => {
-    const html = cardHtml(id, { selectable: true, bomb: !isJoker(id) && bombs.has(valueOf(id)) });
+    let html = cardHtml(id, { selectable: true, bomb: !isJoker(id) && bombs.has(valueOf(id)) });
+    if (got.has(id)) html = html.replace('class="card', 'class="card got');
     return i > 0 && groupStart ? html.replace('class="card', 'class="card gs') : html;
   };
   area.classList.toggle('two', twoRows);
@@ -1235,7 +1251,7 @@ function resultDialog(v) {
 }
 
 // Overlap for the review's small fans, so even a full hand fits one line.
-const fanStep = (n) => Math.max(5, Math.min(14, Math.floor(200 / Math.max(1, n - 1))));
+const fanStep = (n) => Math.max(10, Math.min(24, Math.floor(260 / Math.max(1, n - 1))));
 
 // Per player: finish place, points captured this hand, and the cards still held (face up).
 function reviewPlayers(v, r) {
@@ -1249,7 +1265,7 @@ function reviewPlayers(v, r) {
         <span class="rv-place ${n === 1 ? 'head' : ''}">${n === 1 ? '头游' : n ? `第 ${n}` : ''}</span>
         <span class="rv-name">${esc(shortName(p.name))}${p.seat === v.you?.seat ? '<small>（你）</small>' : ''}</span>
         <span class="rv-pts">收 <b>${r.captured ? r.captured[p.seat] : 0}</b> 分</span>
-        <span class="rv-cards ${out ? 'out' : ''}">${out ? '已出完' : `<span class="fan rv-fan" style="--step:${fanStep(left.length)}px">${left.map((c) => baseCardHtml(c, { size: 'xs' })).join('')}</span><small>${left.length} 张</small>`}</span>
+        <span class="rv-cards ${out ? 'out' : ''}">${out ? '已出完' : `<span class="fan rv-fan" style="--step:${fanStep(left.length)}px">${left.map((c) => baseCardHtml(c, { size: 'sm' })).join('')}</span><small>${left.length} 张</small>`}</span>
       </li>`;
   }).join('');
   return `<ul class="review-players" aria-label="本局复盘">${rows}</ul>`;
