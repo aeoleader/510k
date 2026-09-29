@@ -5,7 +5,8 @@
 set -e
 dest=${1:?usage: bundle.sh <project folder>}
 repo=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
-mkdir -p "$dest/data"
+# data/ may already exist but be hidden from the share: the container owns it after the first start.
+mkdir -p "$dest/data" 2>/dev/null || true
 rm -rf "$dest/app.new"
 mkdir -p "$dest/app.new"
 git -C "$repo" archive HEAD package.json server engine public | tar -x -C "$dest/app.new"
