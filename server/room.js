@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
-import { defaultDecks, sumPoints, deal, MIN_PLAYERS, MAX_PLAYERS } from '../engine/cards.js';
+import { defaultDecks, sumPoints, deal, compareCards, MIN_PLAYERS, MAX_PLAYERS } from '../engine/cards.js';
 import { createHandState, apply, ranking, GameError } from '../engine/game.js';
-import { createMatch, prepareHand, completeReturns, recordHand, isMatchOver, handSeed, HANDS_PER_MATCH } from '../engine/match.js';
+import { createMatch, prepareHand, completeReturns, recordHand, isMatchOver, HANDS_PER_MATCH } from '../engine/match.js';
+import { balancedDeal } from '../engine/balance.js';
 import { botAction, botContext } from '../engine/bot.js';
 import { hints, smallestSingle } from '../engine/hint.js';
 import { computeRatingDeltas } from '../engine/rating.js';
@@ -36,6 +37,9 @@ const BOT_NAMES = ['小白', '阿福', '老K', '十点', '五哥', '炸弹王', 
 
 const randomToken = () => crypto.randomBytes(24).toString('hex');
 const randomId = () => `p_${crypto.randomBytes(6).toString('hex')}`;
+const cryptoInt = (n) => crypto.randomInt(n);
+const COIN_STEPS = 1_000_000;
+const cryptoCoin = (p) => crypto.randomInt(COIN_STEPS) < Math.round(p * COIN_STEPS);
 
 // One room: lobby, a 10-hand match, and the automatic actions (bots, timeouts, next hand).
 // All game rules live in ../engine; this class only sequences them and guards who may act.
@@ -47,12 +51,15 @@ export class Room {
     code, delays = DEFAULT_DELAYS, timers = globalThis, now = Date.now, random = Math.random, onChange = () => {},
     accountView = () => null, onMatchOver = () => {}, counterFor = () => false,
     botPolicy = (hand, seat) => botAction(botContext(hand, seat)),
+    dealRandom = cryptoInt, coin = cryptoCoin,
   }) {
     this.code = code;
     this.delays = { ...DEFAULT_DELAYS, ...delays }; // callers may pass only some delays
     this.timers = timers;
     this.now = now;
     this.random = random; // bot claim times and the fallback leader; tests pass their own
+    this.dealRandom = dealRandom; // (n) -> int in [0, n): every shuffle and the first leader; crypto unless a test passes one
+    this.coin = coin; // (p) -> true with probability p: 发牌平衡's pick; crypto unless a test passes one
     this.onChange = onChange;
     this.accountView = accountView;
     this.counterFor = counterFor; // userId -> whether an admin enabled the card counter for them
@@ -72,9 +79,10 @@ export class Room {
     this.decks = null; // null = default for the player count
     this.turnSeconds = null; // host's choice of time per turn; null = the server default, 0 = no limit
     this.dealMode = false; // host's choice: deal card by card and race to show the black 3
+    this.balanceDeal = false; // host's hidden choice (发牌平衡): only ever shown to the host, never logged
     // lobby | dealing | tribute | returning | return_reveal | playing | hand_over | match_over
     this.phase = 'lobby';
-    this.dealing = null; // { order, startedAt, total, claimAt: { seat: ms }, ended } during `dealing`
+    this.dealing = null; // { order, leftover, startedAt, total, claimAt: { seat: ms }, ended } during `dealing`
     this.claimedBy = null; // seat that showed the black 3 this hand
     this.revealHands = null; // hands after every return, played from once `return_reveal` ends
     this.ready = new Set(); // seats that confirmed the tribute / return reveal, or are ready for the next hand
@@ -255,6 +263,14 @@ export class Room {
     this.changed();
   }
 
+  // Deliberately silent: no log line, so only the host knows.
+  setBalanceDeal(byId, on) {
+    this.requireHost(byId);
+    this.requirePhase('lobby', 'in_progress');
+    this.balanceDeal = on;
+    this.changed();
+  }
+
   setTurnSeconds(byId, seconds) {
     this.requireHost(byId);
     this.requirePhase('lobby', 'in_progress');
@@ -291,7 +307,7 @@ export class Room {
     this.match = createMatch({
       playerCount: this.players.length,
       decks: this.effectiveDecks(),
-      seed: crypto.randomInt(2 ** 32),
+      seed: crypto.randomInt(2 ** 32), // hands are dealt with dealRandom, not from this seed
     });
     this.say(`开始新一轮：${this.players.length} 人，${this.match.decks} 副牌`);
     this.startHand();
@@ -352,15 +368,23 @@ export class Room {
     this.say(`第 ${this.match.handNo + 1} 局开始`);
     if (this.dealMode) this.startDealing();
     else {
-      this.prepared = prepareHand(this.match);
+      this.prepared = prepareHand(this.match, { cards: this.dealCards(), random: this.dealRandom });
       this.afterDeal();
     }
+  }
+
+  // This hand's cards, freshly shuffled with dealRandom. Only the chosen deal is kept anywhere.
+  dealCards() {
+    const { playerCount, decks } = this.match;
+    const fresh = () => deal({ playerCount, decks, random: this.dealRandom });
+    if (!this.balanceDeal) return fresh();
+    return balancedDeal({ match: this.match, deal: fresh, coin: this.coin }).cards;
   }
 
   // ---- dealing (dealMode): cards are revealed one round at a time; first to show the black 3 leads.
 
   startDealing() {
-    const { order } = deal({ playerCount: this.match.playerCount, decks: this.match.decks, seed: handSeed(this.match, this.match.handNo) });
+    const { order, leftover } = this.dealCards();
     const startedAt = this.now();
     const claimAt = {};
     order.forEach((cards, seat) => {
@@ -369,7 +393,8 @@ export class Room {
       const wait = BOT_CLAIM_MIN_MS + Math.floor(this.random() * (BOT_CLAIM_MAX_MS - BOT_CLAIM_MIN_MS + 1));
       claimAt[seat] = startedAt + (i + 1) * this.delays.dealRoundMs + wait;
     });
-    this.dealing = { order, startedAt, total: order[0].length, claimAt, ended: false };
+    // The final hands come from this same deal (finishDeal), so `leftover` is kept with the order.
+    this.dealing = { order, leftover, startedAt, total: order[0].length, claimAt, ended: false };
     this.phase = 'dealing';
     this.setDeadline(null);
     this.schedule();
@@ -441,7 +466,10 @@ export class Room {
   }
 
   finishDeal(leader) {
-    this.prepared = prepareHand(this.match, { leader });
+    const { order, leftover } = this.dealing;
+    // A snapshot from before `leftover` was kept is dealt again from the match seed, as it was then.
+    const cards = leftover ? { hands: order.map((o) => [...o].sort(compareCards)), leftover } : null;
+    this.prepared = prepareHand(this.match, { leader, cards });
     this.dealing = null;
     this.afterDeal();
   }
@@ -841,9 +869,10 @@ export class Room {
       decks: this.decks,
       turnSeconds: this.turnSeconds,
       dealMode: this.dealMode,
+      balanceDeal: this.balanceDeal,
       phase: this.phase,
       dealing: d && {
-        order: d.order, total: d.total, ended: d.ended, elapsedMs: ref - d.startedAt,
+        order: d.order, leftover: d.leftover, total: d.total, ended: d.ended, elapsedMs: ref - d.startedAt,
         claimInMs: Object.fromEntries(Object.entries(d.claimAt).map(([seat, at]) => [seat, at - ref])),
       },
       claimedBy: this.claimedBy,
@@ -889,6 +918,7 @@ export class Room {
       decks: s.decks,
       turnSeconds: s.turnSeconds,
       dealMode: s.dealMode,
+      balanceDeal: s.balanceDeal === true,
       phase: s.phase,
       claimedBy: s.claimedBy,
       revealHands: s.revealHands,
@@ -1039,6 +1069,8 @@ export class Room {
       turnSeconds: Math.round(this.turnMs() / 1000),
       turnChoice: this.turnSeconds,
       dealMode: this.dealMode,
+      // 发牌平衡 is the host's alone: the key is left out of everyone else's view.
+      ...(playerId === this.hostId ? { balanceDeal: this.balanceDeal } : {}),
       paused: this.paused,
       pausedRemaining: this.pausedRemaining,
       dealRounds: rounds,

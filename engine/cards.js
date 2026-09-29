@@ -44,7 +44,8 @@ export function buildDeck(decks) {
   return cards;
 }
 
-// mulberry32: small, fast, deterministic; the seed itself comes from crypto on the server.
+// mulberry32: small, fast, deterministic. Tests, simulations and scripts deal from it;
+// real games pass a cryptographic `random` to deal() instead.
 export function createRng(seed) {
   let t = seed >>> 0;
   return () => {
@@ -56,10 +57,17 @@ export function createRng(seed) {
   };
 }
 
-export function shuffle(cards, rng) {
+// random(n) -> integer in [0, n).
+export const seededRandom = (seed) => {
+  const rng = createRng(seed);
+  return (n) => Math.floor(rng() * n);
+};
+
+// Fisher–Yates driven by random(n) -> integer in [0, n).
+export function shuffle(cards, random) {
   const a = cards.slice();
   for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
+    const j = random(i + 1);
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
@@ -73,14 +81,15 @@ export function teamsFor(playerCount) {
   return Array.from({ length: playerCount }, (_, i) => i % 2);
 }
 
-export function deal({ playerCount, decks, seed }) {
+// random(n) -> integer in [0, n): the server passes a cryptographic one; without it the deal comes from `seed`.
+export function deal({ playerCount, decks, seed = 0, random = null }) {
   if (!Number.isInteger(playerCount) || playerCount < MIN_PLAYERS || playerCount > MAX_PLAYERS) {
     throw new Error(`playerCount must be ${MIN_PLAYERS}-${MAX_PLAYERS}`);
   }
   if (!Number.isInteger(decks) || decks < MIN_DECKS || decks > MAX_DECKS) {
     throw new Error(`decks must be ${MIN_DECKS}-${MAX_DECKS}`);
   }
-  const cards = shuffle(buildDeck(decks), createRng(seed));
+  const cards = shuffle(buildDeck(decks), random || seededRandom(seed));
   const per = Math.floor(cards.length / playerCount);
   // order: each seat's cards as dealt (round r gives every seat its r-th card); hands: sorted.
   const order = Array.from({ length: playerCount }, (_, i) => cards.slice(i * per, (i + 1) * per));

@@ -55,6 +55,11 @@ export function parseDealMode(value) {
   return value;
 }
 
+export function parseBalanceDeal(value) {
+  if (typeof value !== 'boolean') throw new HttpError(400, 'bad_balance_deal');
+  return value;
+}
+
 export const parseToken = (value) => {
   if (typeof value !== 'string' || !/^[a-f0-9]{48}$/.test(value)) throw new HttpError(401, 'bad_token');
   return value;

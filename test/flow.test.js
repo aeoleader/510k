@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { Room, DEFAULT_DELAYS } from '../server/room.js';
 import { HttpError } from '../server/http.js';
 import { createHandState } from '../engine/game.js';
-import { recordHand, firstLeader, prepareHand } from '../engine/match.js';
+import { recordHand } from '../engine/match.js';
+import { seededRandom } from '../engine/cards.js';
 
 // Dealing mode, tribute/return phases, pause, 不计时 and the hand review, on a fake clock.
 
@@ -36,9 +37,9 @@ function fakeClock() {
 }
 
 // humans: names; online: which of them have a stream open; bots added after.
-function setup({ humans = ['甲', '乙', '丙', '丁'], online = humans, bots = 0, dealMode = false, random = () => 0, delays = DELAYS } = {}) {
+function setup({ humans = ['甲', '乙', '丙', '丁'], online = humans, bots = 0, dealMode = false, random = () => 0, delays = DELAYS, dealRandom } = {}) {
   const clock = fakeClock();
-  const room = new Room({ code: 'FLOW', delays, timers: clock.timers, now: clock.now, random });
+  const room = new Room({ code: 'FLOW', delays, timers: clock.timers, now: clock.now, random, ...(dealRandom ? { dealRandom } : {}) });
   const people = humans.map((n) => room.addHuman(n));
   for (let i = 0; i < bots; i++) room.addBot(people[0].id);
   for (const p of people) if (online.includes(p.name)) room.setOnline(p.id, true);
@@ -57,8 +58,7 @@ const firstThree = (order) => order.findIndex(isBlackThree);
 // Jump to a second hand with tribute (seat 3 gives to 0, seat 1 to 2), as if hand 1 ended that way.
 function tributeHand(room) {
   room.match = recordHand(room.match, { ranking: [0, 2, 1, 3], finished: [0, 2], captured: [0, 0, 0, 0] }).match;
-  while (prepareHand(room.match).tribute.resisted) room.match.seed += 1; // skip the rare 抗贡 deal
-  room.startHand();
+  do room.startHand(); while (room.prepared?.tribute.resisted); // skip the rare 抗贡 deal (dealing mode deals later)
 }
 
 // End the current hand at once: seat 2 is already out, seat 0 plays its last card.
@@ -78,12 +78,14 @@ test('delays passed without the new keys fall back to the defaults', () => {
   );
 });
 
-test('dealMode off: no dealing phase, the usual first leader', () => {
-  const { room, host } = setup();
+test('dealMode off: no dealing phase, the first leader drawn from the deal source after the shuffle', () => {
+  const seeded = seededRandom(5);
+  const calls = [];
+  const { room, host } = setup({ dealRandom: (n) => { const x = seeded(n); calls.push([n, x]); return x; } });
   assert.equal(room.viewFor(host.id).dealMode, false);
   room.start(host.id);
   assert.equal(room.phase, 'playing');
-  assert.equal(room.hand.turn, firstLeader(room.match));
+  assert.deepEqual(calls[calls.length - 1], [4, room.hand.turn]);
   assert.equal(room.claimedBy, null);
   assert.equal(room.handRecord.tribute.claimedBy, null);
   const v = room.viewFor(host.id);
@@ -581,11 +583,10 @@ test('抗贡 is shown in the tribute phase for tributeMs, then play starts witho
   room.start(host.id);
   room.match = recordHand(room.match, { ranking: [0, 2, 1, 3], finished: [0, 2], captured: [0, 0, 0, 0] }).match;
   let tries = 0;
-  while (!prepareHand(room.match).tribute.resisted) {
-    room.match.seed += 1;
+  do {
+    room.startHand(); // every hand is a fresh deal
     assert.ok((tries += 1) < 100000, 'no 抗贡 deal found');
-  }
-  room.startHand();
+  } while (!room.prepared.tribute.resisted);
   assert.equal(room.phase, 'tribute');
   const v = room.viewFor(host.id);
   assert.equal(v.tribute.resisted, true);

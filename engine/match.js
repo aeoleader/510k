@@ -21,21 +21,26 @@ export function createMatch({ playerCount, decks, seed }) {
 
 export const handSeed = (match, handNo) => (match.seed + Math.imul(handNo + 1, 0x9e3779b1)) >>> 0;
 
-export function firstLeader(match) {
+// random(n) -> integer in [0, n) (the server's cryptographic source); without it, from the match seed.
+export function firstLeader(match, random = null) {
+  if (random) return random(match.playerCount);
   return Math.floor(createRng(match.seed ^ 0x5f3759df)() * match.playerCount);
 }
 
 // Deal the next hand, hand leftovers to the leader and apply tribute.
 // Card returns (receiver picks a card) are finished later with completeReturns().
 // `leader` overrides who leads (and takes the leftover), e.g. whoever showed the black 3.
-export function prepareHand(match, { leader: override = null } = {}) {
+// `cards`: an already dealt { hands, leftover } (the server deals with crypto); without it the hand is dealt
+// from the match seed. `random` picks the first hand's leader when `cards` came from elsewhere.
+export function prepareHand(match, { leader: override = null, cards = null, random = null } = {}) {
   const handNo = match.handNo;
-  const seed = handSeed(match, handNo);
-  const { hands: dealt, leftover } = deal({ playerCount: match.playerCount, decks: match.decks, seed });
+  // Hands dealt from outside carry no seed; 0 keeps the stored field's shape.
+  const seed = cards ? 0 : handSeed(match, handNo);
+  const { hands: dealt, leftover } = cards ?? deal({ playerCount: match.playerCount, decks: match.decks, seed });
   if (override !== null && !(Number.isInteger(override) && override >= 0 && override < match.playerCount)) {
     throw new Error('bad_leader');
   }
-  const leader = override ?? (match.last ? match.last.ranking[0] : firstLeader(match));
+  const leader = override ?? (match.last ? match.last.ranking[0] : firstLeader(match, random));
   const withLeftover = dealt.map((h, i) => (i === leader ? [...h, ...leftover] : h));
   const pairs = match.last ? tributePairs({ teams: match.teams, ...match.last }) : [];
   const tribute = applyTribute({ hands: withLeftover, pairs, decks: match.decks });

@@ -117,6 +117,29 @@ test('input validation', async () => {
   assert.equal((await post('/api/rooms/leave', { code, token })).ok, true);
 });
 
+test('发牌平衡 over HTTP: host-only, strict, lobby-only, and only in the host\'s view', async () => {
+  const host = await post('/api/rooms/create', { name: '甲' });
+  const guest = await post('/api/rooms/join', { code: host.code, name: '乙' });
+  const hostView = await listen(host.code, host.token);
+  const guestView = await listen(guest.code, guest.token);
+  assert.equal((await post('/api/rooms/balance-deal', { code: host.code, token: host.token, on: 'true' }, 400)).error, 'bad_balance_deal');
+  assert.equal((await post('/api/rooms/balance-deal', { code: host.code, token: host.token }, 400)).error, 'bad_balance_deal');
+  assert.equal((await post('/api/rooms/balance-deal', { code: guest.code, token: guest.token, on: true }, 403)).error, 'host_only');
+  await post('/api/rooms/balance-deal', { code: host.code, token: host.token, on: true });
+  await until(() => hostView.view?.balanceDeal === true);
+  await until(() => guestView.view?.version === hostView.view.version);
+  assert.equal('balanceDeal' in guestView.view, false);
+  for (let i = 0; i < 2; i++) await post('/api/rooms/add-bot', { code: host.code, token: host.token });
+  await post('/api/rooms/start', { code: host.code, token: host.token });
+  assert.equal((await post('/api/rooms/balance-deal', { code: host.code, token: host.token, on: false }, 409)).error, 'in_progress');
+  await until(() => guestView.view?.phase !== 'lobby' && hostView.view?.phase !== 'lobby');
+  assert.equal('balanceDeal' in guestView.view, false);
+  assert.equal(hostView.view.balanceDeal, true);
+  assert.equal(JSON.stringify(guestView.view.log).includes('平衡'), false);
+  await post('/api/rooms/leave', { code: guest.code, token: guest.token });
+  await post('/api/rooms/leave', { code: host.code, token: host.token });
+});
+
 test('pause, resume and dealing mode over HTTP', async () => {
   const host = await post('/api/rooms/create', { name: '甲' });
   const guest = await post('/api/rooms/join', { code: host.code, name: '乙' });

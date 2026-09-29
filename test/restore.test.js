@@ -11,7 +11,7 @@ import { openDatabase } from '../server/db.js';
 import { Accounts } from '../server/accounts.js';
 import { createApp } from '../server/app.js';
 import { createHandState } from '../engine/game.js';
-import { recordHand, prepareHand } from '../engine/match.js';
+import { recordHand } from '../engine/match.js';
 
 // Saving live rooms on shutdown and restoring them on the next start, on a fake clock.
 
@@ -79,8 +79,7 @@ const summary = (room) => room.handLog.map((h) => ({
 // Jump to a second hand with tribute (seat 3 gives to 0, seat 1 to 2), as if hand 1 ended that way.
 function tributeHand(room) {
   room.match = recordHand(room.match, { ranking: [0, 2, 1, 3], finished: [0, 2], captured: [0, 0, 0, 0] }).match;
-  while (prepareHand(room.match).tribute.resisted) room.match.seed += 1; // skip the rare 抗贡 deal
-  room.startHand();
+  do room.startHand(); while (room.prepared?.tribute.resisted); // skip the rare 抗贡 deal (dealing mode deals later)
 }
 
 // End the current hand at once: seat 2 is already out, seat 0 plays its last card.

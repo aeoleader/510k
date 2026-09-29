@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Hub } from './hub.js';
 import { HttpError, sendJson, sendError, readJson } from './http.js';
 import {
-  parseCards, parseCard, parseName, parseCode, parseDecks, parseToken, parseTurnSeconds, parseDealMode, parseBeforeId, parseOutcomeFilter,
+  parseCards, parseCard, parseName, parseCode, parseDecks, parseToken, parseTurnSeconds, parseDealMode, parseBalanceDeal, parseBeforeId, parseOutcomeFilter,
 } from './validate.js';
 import { publicAccount } from './accounts.js';
 import { RateLimiter } from './limiter.js';
@@ -176,6 +176,7 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
     '/api/rooms/swap-seats': ({ room, player, body }) => room.swapSeats(player.id, String(body.a ?? ''), String(body.b ?? '')),
     '/api/rooms/set-turn-time': ({ room, player, body }) => room.setTurnSeconds(player.id, parseTurnSeconds(body.seconds)),
     '/api/rooms/deal-mode': ({ room, player, body }) => room.setDealMode(player.id, parseDealMode(body.on)),
+    '/api/rooms/balance-deal': ({ room, player, body }) => room.setBalanceDeal(player.id, parseBalanceDeal(body.on)),
     '/api/rooms/start': ({ room, player }) => room.start(player.id),
     '/api/rooms/play': ({ room, player, body }) => room.play(player.id, parseCards(body.cards)),
     '/api/rooms/pass': ({ room, player }) => room.pass(player.id),

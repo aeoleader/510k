@@ -495,6 +495,12 @@ function renderLobby(v) {
           title="${isHost ? '每局一张张发牌，先亮黑桃 3 的人先出' : '只有房主可以更改'}" ${isHost ? '' : 'disabled'}><span class="knob"></span></button>
         <span class="deal-state">${v.dealMode ? '开' : '关'}</span>
       </span>
+      ${isHost && typeof v.balanceDeal === 'boolean' ? `<span class="decks deal-mode">
+        <span id="balanceDealLabel">发牌平衡</span>
+        <button type="button" id="balanceDealBtn" class="switch" role="switch" aria-checked="${v.balanceDeal}" aria-labelledby="balanceDealLabel"
+          title="落后的一方更容易拿到好牌（仅房主可见）"><span class="knob"></span></button>
+        <span class="deal-state">${v.balanceDeal ? '开' : '关'}</span>
+      </span>` : ''}
       <span class="note">${mode}${count >= 4 ? `，每人 ${perPlayer} 张${left ? `，余 ${left} 张给首家` : ''}` : ''}</span>
       <span class="spacer"></span>
       ${isHost ? `<button id="addBotBtn" class="btn" ${count >= MAX_SEATS ? 'disabled' : ''}>加机器人</button>` : ''}
@@ -1403,6 +1409,9 @@ document.addEventListener('click', (e) => {
     case 'resumeBtn': run(() => api('/api/rooms/resume')); break;
     case 'dealModeBtn':
       if (state.view) run(() => api('/api/rooms/deal-mode', { on: !state.view.dealMode }));
+      break;
+    case 'balanceDealBtn':
+      if (state.view && typeof state.view.balanceDeal === 'boolean') run(() => api('/api/rooms/balance-deal', { on: !state.view.balanceDeal }));
       break;
     case 'reviewToggleBtn':
       state.reviewCollapsed = !state.reviewCollapsed;
