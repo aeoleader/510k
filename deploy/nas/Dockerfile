@@ -3,7 +3,7 @@
 FROM node:22-alpine
 RUN apk add --no-cache su-exec
 WORKDIR /app
-COPY app/ ./
+COPY --chown=node:node app/ ./
 COPY entrypoint.sh /entrypoint.sh
 # Files copied from an SMB share keep owner-only modes; the server runs as `node`, so open them up.
 RUN chmod -R a+rX /app && chmod 755 /entrypoint.sh && mkdir -p /data
