@@ -8,7 +8,7 @@ import { createMatch, prepareHand } from '../engine/match.js';
 import { createHandState, apply, ranking } from '../engine/game.js';
 import { settleHand } from '../engine/tribute.js';
 import { botAction, botContext } from '../engine/bot.js';
-import { balancedDeal, balanceTarget, balanceChance, sideStrength } from '../engine/balance.js';
+import { balancedDeal, balanceTarget, balanceChance, sideStrength } from '../server/balance.js';
 
 const HANDS = Number(process.argv[2] ?? 20000);
 const BOT_HANDS = Number(process.argv[3] ?? 2000);

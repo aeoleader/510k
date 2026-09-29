@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { defaultDecks, sumPoints, deal, compareCards, MIN_PLAYERS, MAX_PLAYERS } from '../engine/cards.js';
 import { createHandState, apply, ranking, GameError } from '../engine/game.js';
 import { createMatch, prepareHand, completeReturns, recordHand, isMatchOver, HANDS_PER_MATCH } from '../engine/match.js';
-import { balancedDeal } from '../engine/balance.js';
+import { balancedDeal } from './balance.js';
 import { botAction, botContext } from '../engine/bot.js';
 import { hints, smallestSingle } from '../engine/hint.js';
 import { computeRatingDeltas } from '../engine/rating.js';

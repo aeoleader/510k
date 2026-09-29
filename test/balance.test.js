@@ -7,7 +7,7 @@ import { deal, seededRandom } from '../engine/cards.js';
 import { createMatch, recordHand } from '../engine/match.js';
 import {
   handStrength, sideStrength, balanceTarget, balanceChance, balancedDeal, BALANCE_MIN_DEFICIT,
-} from '../engine/balance.js';
+} from '../server/balance.js';
 
 // 发牌平衡: a hidden, host-only lobby setting that sometimes gives a side far behind the better of two deals.
 
