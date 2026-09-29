@@ -1,0 +1,20 @@
+# Synology Container Manager > Project > Create, with this folder as the project path.
+services:
+  game:
+    build: .
+    image: 510k:latest
+    container_name: 510k
+    restart: unless-stopped
+    ports:
+      - "3200:3200"
+    environment:
+      ADMIN_USERS: aeoleader # accounts that may open /admin once registered on this server
+      TZ: Asia/Shanghai
+    volumes:
+      - ./data:/data
+    stop_grace_period: 20s # time to save live rooms before the container is killed
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3200/api/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
