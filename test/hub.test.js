@@ -233,3 +233,12 @@ test('a room error while a stream opens or closes is logged, not thrown', () => 
   assert.equal(hub.streams, 0);
   hub.deleteRoom(room.code);
 });
+
+test('new rooms start untimed (不计时); the host can still pick a limit', () => {
+  const hub = new Hub({ delays: SLOW });
+  const { room, player } = hub.createRoom('甲');
+  assert.equal(room.viewFor(player.id).turnChoice, 0);
+  room.setTurnSeconds(player.id, 30);
+  assert.equal(room.viewFor(player.id).turnSeconds, 30);
+  hub.deleteRoom(room.code);
+});

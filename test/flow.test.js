@@ -74,7 +74,7 @@ test('delays passed without the new keys fall back to the defaults', () => {
   assert.deepEqual(
     [DEFAULT_DELAYS.turnMs, DEFAULT_DELAYS.returnMs, DEFAULT_DELAYS.botMs, DEFAULT_DELAYS.nextHandMs, DEFAULT_DELAYS.tributeMs,
       DEFAULT_DELAYS.returnRevealMs, DEFAULT_DELAYS.dealRoundMs, DEFAULT_DELAYS.claimGraceMs],
-    [15000, 30000, 700, 30000, 5000, 3000, 120, 3000],
+    [15000, 30000, 700, 30000, 7000, 5000, 120, 3000],
   );
 });
 
@@ -663,5 +663,23 @@ test('reconnecting mid-turn keeps the running turn clock', () => {
   assert.equal(room.actions.length, played);
   clock.advance(1);
   assert.equal(room.actions.length, played + 1, 'timed out on the original deadline');
+  room.destroy();
+});
+
+test('the view lists every play, pass and won trick of the hand for the play log', () => {
+  const { room, host, people } = setup();
+  room.start(host.id);
+  assert.deepEqual(room.viewFor(host.id).plays, []);
+  room.hand = createHandState({ hands: [['3S0', '9S0'], ['4S0', '8S0'], ['5S0', '7S0'], ['6S0', 'TS0']], teams: [0, 1, 0, 1], leader: 0, decks: 2 });
+  room.play(people[0].id, ['3S0']);
+  room.play(people[1].id, ['4S0']);
+  room.pass(people[2].id);
+  room.pass(people[3].id);
+  room.pass(people[0].id);
+  const plays = room.viewFor(people[2].id).plays;
+  assert.deepEqual(plays[0], { seat: 0, cards: ['3S0'], type: 'single', auto: false });
+  assert.deepEqual(plays[2], { seat: 2, pass: true, auto: false });
+  assert.equal(plays.at(-1).trick, true);
+  assert.equal(plays.at(-1).seat, 1);
   room.destroy();
 });

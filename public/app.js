@@ -69,6 +69,10 @@ const state = {
   flip: null, // card positions before the post-deal sort, for the FLIP animation
   reviewKey: null, // hand + phase the review collapse state belongs to
   reviewCollapsed: false,
+  playLogOpen: false,
+  sound: readPref('sound', '1') === '1',
+  returnChimed: null, // hand number the return prompt already chimed for
+  urgentSecs: null, // last countdown second a warning tick sounded for
 };
 
 const BIG_TRICK_POINTS = 30;
@@ -155,7 +159,8 @@ function toast(text, kind = 'error') {
   el.classList.toggle('ok', kind === 'ok');
   el.hidden = false;
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => { el.hidden = true; }, 2200);
+  // Long enough to read at a relaxed pace: at least 4 seconds, longer for longer messages.
+  toast.timer = setTimeout(() => { el.hidden = true; }, Math.max(4000, text.length * 300));
 }
 
 const inviteLink = (code) => `${location.origin}/?room=${code}`;
@@ -338,6 +343,7 @@ function render() {
   renderPauseButton(v);
   if (!inRoom) renderEntry();
   if (!v) {
+    $('tableTools').hidden = true;
     $('scoreboard').hidden = true;
     $('overlay').hidden = true;
     return;
@@ -348,6 +354,7 @@ function render() {
     state.reviewKey = reviewKey;
     state.reviewCollapsed = false;
   }
+  $('tableTools').hidden = v.phase === 'lobby';
   if (v.phase === 'lobby') {
     $('scoreboard').hidden = true;
     renderLobby(v);
@@ -463,6 +470,7 @@ function renderLobby(v) {
       </div>
       <div class="head-actions">
         <button type="button" class="btn btn-primary btn-sm head-copy" data-action="copy-link">复制邀请链接</button>
+        <a class="btn" href="/rules.html" target="_blank" rel="noopener">规则</a>
         <button id="leaveBtn" class="btn btn-danger">离开房间</button>
       </div>
     </div>
@@ -477,7 +485,7 @@ function renderLobby(v) {
         <select id="decksSelect" ${isHost ? '' : 'disabled'}>${deckOptions}</select>
       </label>
       <label class="decks">出牌限时
-        <select id="turnSelect" ${isHost ? '' : 'disabled'}>${[null, 10, 15, 20, 30, 45, 60, 0].map((sec) => `
+        <select id="turnSelect" ${isHost ? '' : 'disabled'}>${[...(v.turnChoice === null ? [null] : []), 0, 10, 15, 20, 30, 45, 60].map((sec) => `
           <option value="${sec ?? ''}" ${v.turnChoice === sec ? 'selected' : ''}>${sec === null ? `默认 ${v.turnChoice === null ? v.turnSeconds : 15} 秒` : sec === 0 ? '不计时' : `${sec} 秒`}</option>`).join('')}
         </select>
       </label>
@@ -576,6 +584,7 @@ function renderTable(v) {
     const isMe = p.id === v.you?.id;
     const { x, y } = landscape && isMe ? { x: 50, y: 100 } : seatPoint(p.seat, v);
     const cls = ['seat'];
+    if (isMe) cls.push('is-me');
     if (landscape && isMe) cls.push('is-hidden-me');
     if (v.turn === p.seat) cls.push('is-turn');
     if (p.place) cls.push('is-out');
@@ -650,11 +659,13 @@ function renderTable(v) {
   announceMyTurn(v);
   $('logTicker').innerHTML = [...v.log].slice(-3).reverse().map((l) => `<li>${esc(l.text)}</li>`).join('');
 
-  if (dealing) renderDealHand(v, dealing.cards);
-  else renderHand(v);
+  // Actions first: in landscape they share the dock row with the hand, so the hand is sized to what they leave.
   renderActions(v);
   renderQuickPicks(v);
+  if (dealing) renderDealHand(v, dealing.cards);
+  else renderHand(v);
   renderCounter(v);
+  renderPlayLog(v);
 }
 
 // Where a seat sits on the stage for effects; in landscape my own seat is the dock.
@@ -751,6 +762,85 @@ function renderCounter(v) {
     </div>`;
 }
 
+// Floating panel with every play of this hand, grouped by trick, newest at the bottom.
+function renderPlayLog(v) {
+  const panel = $('playLog');
+  const btn = $('playLogBtn');
+  const sound = $('soundBtn');
+  sound.setAttribute('aria-pressed', String(state.sound));
+  sound.textContent = state.sound ? '声音：开' : '声音：关';
+  const plays = v.plays || [];
+  btn.hidden = !plays.length && v.phase !== 'playing';
+  btn.setAttribute('aria-expanded', String(state.playLogOpen));
+  btn.classList.toggle('on', state.playLogOpen);
+  const wasHidden = panel.hidden;
+  panel.hidden = !state.playLogOpen || btn.hidden;
+  if (panel.hidden) return;
+  const name = (seat) => esc(shortName(playerAt(seat).name)) + (seat === v.you?.seat ? '（你）' : '');
+  const rounds = [[]];
+  for (const p of plays) {
+    const round = rounds[rounds.length - 1];
+    if (p.trick) {
+      round.push(`<li class="pl-trick">${name(p.seat)} 收下这一轮${p.points ? `，得 <b>${p.points}</b> 分` : '（没有分）'}</li>`);
+      rounds.push([]);
+    } else if (p.pass) {
+      round.push(`<li><span class="pl-name">${name(p.seat)}</span><span class="pl-pass">不要${p.auto ? '（自动）' : ''}</span></li>`);
+    } else {
+      round.push(`<li><span class="pl-name">${name(p.seat)}</span><span class="pl-play"><span class="pl-type">${TYPE_LABEL[p.type] ?? ''}${p.auto ? '（自动）' : ''}</span>${fanHtml(p.cards, 'sm')}</span></li>`);
+    }
+  }
+  if (!rounds[rounds.length - 1].length) rounds.pop();
+  const body = rounds.length
+    ? rounds.map((r, i) => `<li class="pl-round"><h4>第 ${i + 1} 轮</h4><ol>${r.join('')}</ol></li>`).join('')
+    : '<li class="pl-empty">这一局还没有人出牌</li>';
+  const list = panel.querySelector('.pl-list');
+  const atBottom = wasHidden || !list || list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+  panel.innerHTML = `
+    <div class="pl-head"><h3>本局出牌记录</h3><button id="playLogClose" type="button" class="btn">关闭</button></div>
+    <ol class="pl-list">${body}</ol>`;
+  // Stay with the newest play unless the player scrolled up to read older ones.
+  const fresh = panel.querySelector('.pl-list');
+  if (atBottom) fresh.scrollTop = fresh.scrollHeight;
+  else fresh.scrollTop = list.scrollTop;
+}
+
+// Short chimes made with Web Audio (no sound files). Browsers only allow sound after a tap, so the
+// context is created on the first tap anywhere and reused.
+let audio = null;
+function audioContext() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  try {
+    if (!audio) audio = new AC();
+    if (audio.state === 'suspended') audio.resume();
+  } catch { return null; }
+  return audio;
+}
+document.addEventListener('pointerdown', () => { if (state.sound) audioContext(); }, { passive: true });
+
+function beep(notes, volume = 0.25) {
+  if (!state.sound) return;
+  const ctx = audioContext();
+  if (!ctx) return;
+  let t = ctx.currentTime + 0.02;
+  for (const [freq, secs] of notes) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, t);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(volume, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + secs);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + secs + 0.05);
+    t += secs * 0.8;
+  }
+}
+const chimeMyTurn = () => beep([[660, 0.18], [880, 0.32]]);
+const chimeUrgent = () => beep([[990, 0.12]], 0.18);
+
 const GROUP_GAP = 12; // extra space before each 510K group, px
 const TWO_ROW_MIN_CARDS = 14;
 const MIN_STEP = 12; // smallest visible slice of a covered card, px
@@ -771,6 +861,7 @@ function announceMyTurn(v) {
   document.querySelector('.dock').classList.toggle('my-turn', mine);
   if (mine && !state.wasMyTurn && state.fxPrimed) {
     fx.banner('轮到你了');
+    chimeMyTurn();
     try { navigator.vibrate?.(40); } catch { /* not supported */ }
   }
   state.wasMyTurn = mine;
@@ -796,6 +887,20 @@ const twoRowHand = (count) => {
   return w < 700 && h > LANDSCAPE_MAX_HEIGHT && count >= TWO_ROW_MIN_CARDS;
 };
 
+// Cards that came into my hand through tribute (上贡 to me) or its return (还贡 to me), marked 新 until I first play,
+// so it is easy to see what changed in the hand.
+function receivedCards(v) {
+  const t = v.tribute;
+  const me = v.you?.seat;
+  if (!t || me === undefined || !['tribute', 'returning', 'return_reveal', 'playing'].includes(v.phase)) return new Set();
+  if (v.phase === 'playing' && (v.plays || []).some((p) => p.seat === me && !p.trick)) return new Set();
+  const ids = [
+    ...t.given.filter((g) => g.to === me).map((g) => g.card),
+    ...t.returns.filter((r) => r.to === me && r.card).map((r) => r.card),
+  ];
+  return new Set(ids.filter((id) => v.you.hand.includes(id)));
+}
+
 function renderHand(v) {
   const area = $('handArea');
   delete area.dataset.deal;
@@ -817,8 +922,10 @@ function renderHand(v) {
   const gaps = Math.max(...rows.map((r) => r.filter((c, i) => i > 0 && c.groupStart).length)) * GROUP_GAP;
   handSizing(area, widest, gaps);
 
+  const got = receivedCards(v);
   const cardEl = ({ id, groupStart }, i) => {
-    const html = cardHtml(id, { selectable: true, bomb: !isJoker(id) && bombs.has(valueOf(id)) });
+    let html = cardHtml(id, { selectable: true, bomb: !isJoker(id) && bombs.has(valueOf(id)) });
+    if (got.has(id)) html = html.replace('class="card', 'class="card got');
     return i > 0 && groupStart ? html.replace('class="card', 'class="card gs') : html;
   };
   area.classList.toggle('two', twoRows);
@@ -1026,6 +1133,8 @@ function renderOverlay(v) {
         ${v.you?.isHost ? '<button id="resumeBtn" type="button" class="btn btn-primary">继续游戏</button>' : '<span class="note">等待房主继续</span>'}
       </div>`;
   } else if (mustReturn) {
+    if (state.fxPrimed && state.returnChimed !== v.handNo) chimeMyTurn();
+    state.returnChimed = v.handNo;
     mode = 'passive';
     html = returnDialog(v);
   } else if ((v.phase === 'hand_over' || v.phase === 'match_over') && !state.reviewCollapsed) {
@@ -1142,7 +1251,7 @@ function resultDialog(v) {
 }
 
 // Overlap for the review's small fans, so even a full hand fits one line.
-const fanStep = (n) => Math.max(5, Math.min(14, Math.floor(200 / Math.max(1, n - 1))));
+const fanStep = (n) => Math.max(10, Math.min(24, Math.floor(260 / Math.max(1, n - 1))));
 
 // Per player: finish place, points captured this hand, and the cards still held (face up).
 function reviewPlayers(v, r) {
@@ -1156,7 +1265,7 @@ function reviewPlayers(v, r) {
         <span class="rv-place ${n === 1 ? 'head' : ''}">${n === 1 ? '头游' : n ? `第 ${n}` : ''}</span>
         <span class="rv-name">${esc(shortName(p.name))}${p.seat === v.you?.seat ? '<small>（你）</small>' : ''}</span>
         <span class="rv-pts">收 <b>${r.captured ? r.captured[p.seat] : 0}</b> 分</span>
-        <span class="rv-cards ${out ? 'out' : ''}">${out ? '已出完' : `<span class="fan rv-fan" style="--step:${fanStep(left.length)}px">${left.map((c) => baseCardHtml(c, { size: 'xs' })).join('')}</span><small>${left.length} 张</small>`}</span>
+        <span class="rv-cards ${out ? 'out' : ''}">${out ? '已出完' : `<span class="fan rv-fan" style="--step:${fanStep(left.length)}px">${left.map((c) => baseCardHtml(c, { size: 'sm' })).join('')}</span><small>${left.length} 张</small>`}</span>
       </li>`;
   }).join('');
   return `<ul class="review-players" aria-label="本局复盘">${rows}</ul>`;
@@ -1172,6 +1281,16 @@ function tick() {
     el.textContent = left ? left.secs : '';
     el.style.setProperty('--p', left ? left.fraction : 0);
   }
+  // My own turn or return in its last five seconds: the countdown turns red and ticks.
+  const mine = v && ((v.phase === 'playing' && v.turn === v.you?.seat) || (v.phase === 'returning' && v.you?.mustReturnTo !== null));
+  const urgent = Boolean(mine && left && !v.paused && left.secs <= 5);
+  for (const el of document.querySelectorAll('[data-timer]')) el.classList.toggle('urgent', urgent);
+  if (urgent && state.urgentSecs !== left.secs && left.secs > 0) {
+    state.urgentSecs = left.secs;
+    chimeUrgent();
+    if (left.secs === 5) { try { navigator.vibrate?.(60); } catch { /* not supported */ } }
+  }
+  if (!urgent) state.urgentSecs = null;
   for (const el of document.querySelectorAll('[data-secs]')) el.textContent = left ? left.secs : '';
   for (const el of document.querySelectorAll('[data-ring]')) {
     const active = v?.phase === 'playing' && Number(el.dataset.ring) === v.turn && left;
@@ -1279,6 +1398,17 @@ document.addEventListener('click', (e) => {
       break;
     case 'restartBtn': run(() => api('/api/rooms/restart')); break;
     case 'clearBtn': state.selected.clear(); render(); break;
+    case 'playLogBtn':
+    case 'playLogClose':
+      state.playLogOpen = target.id === 'playLogBtn' ? !state.playLogOpen : false;
+      render();
+      break;
+    case 'soundBtn':
+      state.sound = !state.sound;
+      writePref('sound', state.sound ? '1' : '0');
+      if (state.sound) beep([[880, 0.15]]);
+      render();
+      break;
     case 'rotateBtn': toggleLandscape(); break;
     case 'copyLinkBtn':
     case 'roomBadge':

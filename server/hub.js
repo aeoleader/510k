@@ -70,6 +70,7 @@ export class Hub {
     do code = randomCode(); while (this.rooms.has(code));
     const room = new Room({ code, ...this.roomDeps() });
     room.creatorIp = ip;
+    room.turnSeconds = 0; // new rooms start untimed (不计时); the host can pick a limit in the lobby
     this.rooms.set(code, room);
     const player = room.addHuman(name, user);
     return { room, player };
