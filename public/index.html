@@ -28,6 +28,10 @@
     <span id="accountChip" class="account-chip" hidden></span>
     <button id="pauseBtn" type="button" class="btn btn-ghost pause-btn" title="暂停游戏" aria-label="暂停游戏" hidden><span aria-hidden="true">❚❚</span><span class="long"> 暂停</span></button>
     <button id="rotateBtn" type="button" class="btn btn-ghost rotate-btn" hidden>横屏</button>
+    <div id="tableTools" class="table-tools" hidden>
+      <button id="playLogBtn" type="button" class="btn tool-btn" aria-expanded="false" aria-controls="playLog">出牌记录</button>
+      <button id="soundBtn" type="button" class="btn tool-btn" aria-pressed="true">声音：开</button>
+    </div>
     <a class="rules-link" href="/rules.html" target="_blank" rel="noopener">规则</a>
   </header>
 
@@ -66,10 +70,6 @@
       <div id="seats" class="seats"></div>
       <div id="fx" class="fx-layer" aria-hidden="true"></div>
       <aside id="counterPanel" class="counter" aria-label="记牌器" hidden></aside>
-      <div class="table-tools">
-        <button id="playLogBtn" type="button" class="btn tool-btn" aria-expanded="false" aria-controls="playLog">出牌记录</button>
-        <button id="soundBtn" type="button" class="btn tool-btn" aria-pressed="true">声音：开</button>
-      </div>
       <aside id="playLog" class="play-log" aria-label="本局出牌记录" hidden></aside>
     </section>
     <section class="dock" aria-label="我的手牌">

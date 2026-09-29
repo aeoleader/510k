@@ -81,6 +81,7 @@ b { font-weight: 800; }
 .btn-ghost { background: transparent; }
 .btn-danger { background: transparent; border-color: rgba(239, 109, 97, 0.5); color: #f5a097; }
 .btn-block { width: 100%; }
+a.btn { color: inherit; text-decoration: none; }
 .btn-sm { min-height: 30px; padding: 0 12px; font-size: 13px; }
 
 input, select {
@@ -1007,6 +1008,36 @@ html.landscape .sort-btn .long { display: none; }
 /* the latest winning play stands out a little more */
 .played.is-top { z-index: 2; }
 .played.is-top .fan { transform: scale(1.08); }
+@media (orientation: portrait) {
+  html:not(.landscape) .table-tools {
+    position: fixed; top: calc(var(--topbar-h) + 8px); left: 8px; z-index: 6; margin: 0;
+    flex-direction: column; align-items: flex-start; gap: 6px;
+  }
+  html:not(.landscape) .tool-btn { min-height: 40px; }
+  html:not(.landscape) .play-log { left: 8px; right: auto; top: 104px; width: min(420px, calc(100% - 16px)); max-height: calc(100% - 112px); }
+}
+.rules-link { white-space: nowrap; }
+/* upright tablets and unfolded foldables: the top bar is narrower than it looks, drop the progress dots */
+@media (max-width: 1024px) and (orientation: portrait) {
+  .hand-progress { display: none; }
+}
+/* the top bar never pushes the page wider: team names are the first thing to give way */
+.scoreboard { overflow: hidden; }
+@media (max-width: 1280px) { .scoreboard .who { display: none; } }
+/* a folded foldable's narrow cover screen held upright: keep the top bar on one line */
+@media (max-width: 360px) {
+  .hand-label { display: none; }
+  .topbar, .topbar.with-pause { gap: 4px; padding: 0 6px; }
+  .room-code, .topbar.with-pause .room-code { letter-spacing: 0; padding: 2px 6px; }
+}
+/* big near-square screens (unfolded foldables, tablets): the felt has room for larger played cards */
+@media (min-width: 700px) and (min-height: 700px) {
+  .card.md { --w: 64px; }
+  .card.sm { --w: 48px; }
+}
+/* my own seat sits at the bottom of the felt: lift it so its nameplate is not cut off by the dock */
+.seat.is-me { margin-top: -14px; }
+
 html.landscape .card.md { --w: 40px; }
 html.landscape .card.sm { --w: 32px; }
 html.landscape .played .pass-tag { font-size: 12px; padding: 2px 10px; }
@@ -1299,12 +1330,18 @@ html.landscape .review-bar .rb-title { font-size: 12px; }
 }
 
 /* play log: a button on the felt opens a floating panel with every play of this hand */
-.table-tools { position: absolute; left: 10px; bottom: 8px; z-index: 6; display: flex; gap: 8px; }
-.tool-btn { min-height: 44px; padding: 0 14px; font-size: 15px; background: rgba(8, 22, 18, 0.85); }
+/* the top bar's backdrop blur makes it a stacking context: lift it over the felt (below overlays at 10)
+   so the tools that float out of it on upright screens stay tappable */
+.topbar { position: relative; z-index: 9; }
+/* The tools live in the top bar (landscape phones, tablets, desktop); upright screens float them in the felt's corner. */
+.table-tools { display: flex; gap: 8px; flex: none; }
+.table-tools:not([hidden]) + .rules-link { margin-left: 12px; }
+.table-tools { margin-left: auto; }
+.tool-btn { min-height: 38px; padding: 0 14px; font-size: 15px; background: rgba(8, 22, 18, 0.85); }
 .tool-btn.on { border-color: var(--accent); color: var(--accent-2); }
 .tool-btn[aria-pressed="false"] { color: var(--muted); }
 .play-log {
-  position: absolute; left: 10px; bottom: 60px; z-index: 7; width: min(380px, calc(100% - 20px)); max-height: calc(100% - 76px);
+  position: absolute; right: 10px; top: 8px; z-index: 7; width: min(400px, calc(100% - 20px)); max-height: calc(100% - 16px);
   display: grid; grid-template-rows: auto minmax(0, 1fr);
   border-radius: var(--radius-panel); background: rgba(8, 22, 18, 0.96); border: 1px solid var(--accent); box-shadow: var(--shadow);
 }
@@ -1338,10 +1375,7 @@ html.landscape .review-bar .rb-title { font-size: 12px; }
   .seat .stats { font-size: 13px; }
   .team-score .num { font-size: 17px; }
   .timer { width: 42px; height: 42px; font-size: 16px; }
-  /* portrait phones: my own seat sits bottom centre, so the tools go to the empty top-left corner */
-  .table-tools { left: 6px; top: 6px; bottom: auto; flex-direction: column; align-items: flex-start; gap: 6px; }
-  .tool-btn { min-height: 40px; padding: 0 10px; font-size: 14px; }
-  .play-log { left: 6px; top: 100px; bottom: auto; width: calc(100% - 12px); max-height: calc(100% - 110px); }
+
   .pl-list .card.sm { --w: 30px; }
 }
 
@@ -1363,9 +1397,22 @@ html.landscape .action-bar .status { font-size: 14px; }
 html.landscape .timer { width: 38px; height: 38px; font-size: 15px; }
 html.landscape .pick { min-height: 36px; font-size: 14px; }
 html.landscape .rules-link { display: inline; }
-html.landscape .table-tools { top: auto; bottom: 4px; flex-direction: row; }
-html.landscape .tool-btn { min-height: 36px; font-size: 13px; padding: 0 10px; }
-html.landscape .play-log { top: auto; bottom: 46px; width: min(380px, calc(100% - 20px)); max-height: calc(100% - 52px); }
+html.landscape .topbar .btn { min-height: 32px; }
+/* landscape top bar also carries the table tools: drop what the felt already shows */
+html.landscape .hand-label { display: none; }
+@media (max-width: 900px) { html.landscape .wordmark { display: none; } }
+@media (max-width: 700px) {
+  html.landscape .topbar { gap: 4px; }
+  html.landscape .tool-btn, html.landscape .pause-btn { padding: 0 8px; }
+  html.landscape .room-code { letter-spacing: 2px; padding: 2px 8px; }
+}
+html.landscape .tool-btn { min-height: 32px; font-size: 14px; padding: 0 12px; }
+html.landscape .play-log { top: 4px; right: max(8px, var(--safe-r)); max-height: calc(100% - 8px); }
+/* very short landscape screens (a foldable's cover screen on its side): give the felt every pixel */
+@media (max-height: 340px) {
+  html.landscape { --topbar-h: 36px; }
+  html.landscape .hand-label { display: none; }
+}
 html.landscape .pl-list .card.sm { --w: 28px; }
 html.landscape .tribute-panel li { font-size: 13px; }
 html.landscape .rv-name { font-size: 14px; }

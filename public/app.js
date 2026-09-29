@@ -343,6 +343,7 @@ function render() {
   renderPauseButton(v);
   if (!inRoom) renderEntry();
   if (!v) {
+    $('tableTools').hidden = true;
     $('scoreboard').hidden = true;
     $('overlay').hidden = true;
     return;
@@ -353,6 +354,7 @@ function render() {
     state.reviewKey = reviewKey;
     state.reviewCollapsed = false;
   }
+  $('tableTools').hidden = v.phase === 'lobby';
   if (v.phase === 'lobby') {
     $('scoreboard').hidden = true;
     renderLobby(v);
@@ -582,6 +584,7 @@ function renderTable(v) {
     const isMe = p.id === v.you?.id;
     const { x, y } = landscape && isMe ? { x: 50, y: 100 } : seatPoint(p.seat, v);
     const cls = ['seat'];
+    if (isMe) cls.push('is-me');
     if (landscape && isMe) cls.push('is-hidden-me');
     if (v.turn === p.seat) cls.push('is-turn');
     if (p.place) cls.push('is-out');
@@ -656,10 +659,11 @@ function renderTable(v) {
   announceMyTurn(v);
   $('logTicker').innerHTML = [...v.log].slice(-3).reverse().map((l) => `<li>${esc(l.text)}</li>`).join('');
 
-  if (dealing) renderDealHand(v, dealing.cards);
-  else renderHand(v);
+  // Actions first: in landscape they share the dock row with the hand, so the hand is sized to what they leave.
   renderActions(v);
   renderQuickPicks(v);
+  if (dealing) renderDealHand(v, dealing.cards);
+  else renderHand(v);
   renderCounter(v);
   renderPlayLog(v);
 }
