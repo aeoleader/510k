@@ -5,7 +5,8 @@ RUN apk add --no-cache su-exec
 WORKDIR /app
 COPY app/ ./
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod 755 /entrypoint.sh && mkdir -p /data
+# Files copied from an SMB share keep owner-only modes; the server runs as `node`, so open them up.
+RUN chmod -R a+rX /app && chmod 755 /entrypoint.sh && mkdir -p /data
 ENV NODE_ENV=production PORT=3200 HOST=0.0.0.0 DATA_DIR=/data
 EXPOSE 3200
 # SIGTERM makes the server save live rooms; they are restored on the next start.
