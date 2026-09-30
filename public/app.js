@@ -20,6 +20,7 @@ const ERROR_TEXT = {
   bad_deal_mode: '发牌模式设置无效', not_dealing: '发牌已经结束', paused: '房主已暂停，请稍候', already_claimed: '已经有人亮了黑3',
   no_black_three: '你还没拿到黑桃 3', not_hand_over: '现在不需要确认', cannot_pause: '现在不能暂停', not_paused: '游戏没有暂停',
   name_in_use: '这个名字正在牌桌上使用中',
+  not_in_match: '现在不在对局中', disband_pending: '已经有人申请解散了', no_disband: '解散申请已经结束',
 };
 const SEAT_TAKEN_TEXT = '你的座位已在其他设备上重新加入';
 const PAUSABLE = ['dealing', 'tribute', 'returning', 'return_reveal', 'playing', 'hand_over'];
@@ -73,6 +74,8 @@ const state = {
   sound: readPref('sound', '1') === '1',
   returnChimed: null, // hand number the return prompt already chimed for
   urgentSecs: null, // last countdown second a warning tick sounded for
+  exitOpen: false, // the 退出 dialog: leave the table, or ask everyone to disband the match
+  disbandChimed: null, // deadline of the disband request the vote prompt already chimed for
 };
 
 const BIG_TRICK_POINTS = 30;
@@ -235,7 +238,7 @@ async function recoverRoom(es, attempt = 0) {
 function leaveRoomLocally() {
   if (state.events) state.events.close();
   writeSession(`token:${state.code}`, null);
-  Object.assign(state, { code: null, token: null, view: null, events: null, fxPrimed: false });
+  Object.assign(state, { code: null, token: null, view: null, events: null, fxPrimed: false, exitOpen: false });
   state.fxSeen.clear();
   state.selected.clear();
   const url = new URL(location.href);
@@ -346,6 +349,7 @@ function render() {
     $('tableTools').hidden = true;
     $('scoreboard').hidden = true;
     $('overlay').hidden = true;
+    renderExit(null);
     return;
   }
   // A new hand or phase opens the review expanded again.
@@ -363,6 +367,7 @@ function render() {
     renderTable(v);
   }
   renderOverlay(v);
+  renderExit(v);
   tick();
 }
 
@@ -1124,6 +1129,78 @@ function dealAction(v) {
   return '<span class="status">发牌中…</span>';
 }
 
+const inMatch = (v) => v.phase !== 'lobby' && v.phase !== 'match_over';
+
+// 退出 in the top bar opens a choice: leave the table (a bot plays on), or ask everyone to end the match.
+// An open disband request shows as a prompt for those who still have to answer, and as a bar for the rest.
+function renderExit(v) {
+  const layer = $('exitLayer');
+  const bar = $('disbandBar');
+  const d = v && inMatch(v) ? v.disband : null;
+  const mySeat = v?.you?.seat;
+  const mustVote = Boolean(d && d.voters.includes(mySeat) && !d.yes.includes(mySeat));
+  if (!v || v.phase === 'lobby') state.exitOpen = false;
+  let html = '';
+  if (mustVote) {
+    if (state.disbandChimed !== d.deadline) chimeMyTurn();
+    state.disbandChimed = d.deadline;
+    html = `
+      <div class="dialog exit-dialog" role="alertdialog" aria-label="有人申请解散">
+        <h2>${esc(shortName(playerAt(d.by).name))} 申请解散本轮</h2>
+        <p>同意后本轮马上结束，<b>不计分</b>，大家一起回到房间。要所有人都同意才会解散。</p>
+        <div class="exit-choices">
+          <button id="disbandYesBtn" type="button" class="btn btn-danger exit-big">同意解散</button>
+          <button id="disbandNoBtn" type="button" class="btn btn-primary exit-big">不同意，继续打</button>
+        </div>
+        <p class="exit-foot"><span data-disband-secs></span> 秒内没人回答就当不同意</p>
+      </div>`;
+  } else if (state.exitOpen && v) {
+    html = inMatch(v) ? exitChoices(v) : `
+      <div class="dialog exit-dialog" role="dialog" aria-label="离开房间">
+        <h2>离开房间？</h2>
+        <p>本轮已经结束，离开不影响任何人的分数。</p>
+        <div class="exit-choices">
+          <button id="leaveBtn" type="button" class="btn btn-danger exit-big">离开房间</button>
+          <button id="exitCancelBtn" type="button" class="btn exit-big">留下</button>
+        </div>
+      </div>`;
+  }
+  layer.hidden = !html;
+  if (layer.innerHTML !== html) layer.innerHTML = html;
+  const waiting = d && !mustVote && d.yes.includes(mySeat);
+  bar.hidden = !waiting;
+  bar.innerHTML = waiting ? `
+    <span>申请解散中：<b>${d.voters.filter((s) => d.yes.includes(s)).length} / ${d.voters.length}</b> 人同意，还剩 <span data-disband-secs></span> 秒</span>
+    <button id="disbandNoBtn" type="button" class="btn btn-sm">撤回</button>` : '';
+  $('exitBtn').setAttribute('aria-expanded', String(Boolean(html)));
+}
+
+function exitChoices(v) {
+  const pending = Boolean(v.disband);
+  const rated = Boolean(v.you?.account);
+  return `
+    <div class="dialog exit-dialog" role="dialog" aria-label="退出">
+      <h2>要退出吗？</h2>
+      <div class="exit-option">
+        <div>
+          <h3>自己离开牌桌</h3>
+          <p>机器人替你打完本轮，其他人接着玩。重新进这个房间就能接回座位。${rated ? '<br>中途离开按输方结算段位分。' : ''}</p>
+        </div>
+        <button id="leaveBtn" type="button" class="btn btn-danger exit-big">离开牌桌</button>
+      </div>
+      <div class="exit-option">
+        <div>
+          <h3>大家一起解散</h3>
+          <p>${pending ? '已经有人申请解散，正在等大家回答。' : '问一下其他人，都同意后本轮结束、<b>不计分</b>，一起回到房间。'}</p>
+        </div>
+        <button id="disbandBtn" type="button" class="btn exit-big" ${pending ? 'disabled' : ''}>申请解散</button>
+      </div>
+      <div class="exit-choices">
+        <button id="exitCancelBtn" type="button" class="btn btn-primary exit-big">继续打牌</button>
+      </div>
+    </div>`;
+}
+
 function renderOverlay(v) {
   const overlay = $('overlay');
   let html = '';
@@ -1310,6 +1387,10 @@ function tick() {
   }
   if (!urgent) state.urgentSecs = null;
   for (const el of document.querySelectorAll('[data-secs]')) el.textContent = left ? left.secs : '';
+  const d = v?.disband;
+  for (const el of document.querySelectorAll('[data-disband-secs]')) {
+    el.textContent = d ? Math.max(0, Math.ceil((d.deadline - (Date.now() + state.clockOffset)) / 1000)) : '';
+  }
   for (const el of document.querySelectorAll('[data-ring]')) {
     const active = v?.phase === 'playing' && Number(el.dataset.ring) === v.turn && left;
     el.style.setProperty('--p', active ? left.fraction : 0);
@@ -1406,6 +1487,15 @@ document.addEventListener('click', (e) => {
     case 'readyBtn': run(() => api('/api/rooms/ready')); break;
     case 'claimBtn': run(() => api('/api/rooms/claim-three')); break;
     case 'pauseBtn': run(() => api('/api/rooms/pause')); break;
+    case 'exitBtn': state.exitOpen = !state.exitOpen; render(); break;
+    case 'exitCancelBtn': state.exitOpen = false; render(); break;
+    case 'disbandBtn':
+      state.exitOpen = false;
+      render();
+      run(() => api('/api/rooms/disband'));
+      break;
+    case 'disbandYesBtn': run(() => api('/api/rooms/disband-vote', { agree: true })); break;
+    case 'disbandNoBtn': run(() => api('/api/rooms/disband-vote', { agree: false })); break;
     case 'resumeBtn': run(() => api('/api/rooms/resume')); break;
     case 'dealModeBtn':
       if (state.view) run(() => api('/api/rooms/deal-mode', { on: !state.view.dealMode }));
@@ -1475,6 +1565,13 @@ document.addEventListener('change', (e) => {
 });
 
 $('codeInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('joinBtn').click(); });
+// Tapping beside the 退出 dialog, or Esc, closes it (a disband prompt needs an answer instead).
+$('exitLayer').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget && state.exitOpen) { state.exitOpen = false; render(); }
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && state.exitOpen) { state.exitOpen = false; render(); }
+});
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' && e.key !== ' ') return;
   if (e.target.dataset?.swap) {
