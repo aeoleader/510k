@@ -20,6 +20,7 @@ export const DEFAULT_DELAYS = {
   restoreGraceMs: 20000, // after a server restart, humans count as present this long so they can reconnect
   reclaimOfflineMs: 30000, // a guest seat that is only offline may be taken back by name after this long
   hostAwayMs: 60000, // while paused, a host offline this long hands the host role to an online human
+  disbandVoteMs: 60000, // a request to disband the match lapses if not everyone agreed by then
 };
 // Rescheduling attempts per phase after an automatic action failed, so a room never wedges nor spins.
 const TIMER_RETRIES = 3;
@@ -88,6 +89,8 @@ export class Room {
     this.ready = new Set(); // seats that confirmed the tribute / return reveal, or are ready for the next hand
     this.paused = false;
     this.pausedAt = null;
+    this.disband = null; // { by: seat, yes: [seats], deadline } while a request to end the match early is open
+    this.disbandTimer = null;
     this.pausedRemaining = null; // ms left on the deadline when the host paused
     this.online = new Set();
     this.offlineSince = new Map(); // playerId -> when that human was last seen (not saved: a restore resets it)
@@ -191,6 +194,7 @@ export class Room {
     this.online.delete(playerId);
     this.passHost(playerId);
     this.say(`${player.name} 离开了牌桌，由机器人托管到本轮结束`);
+    if (this.disbandAgreed()) return this.finishDisband(); // the leaver was the last one who had not agreed
     this.schedule();
     if (this.readyToAdvance()) return this.advanceReady();
     this.changed();
@@ -229,6 +233,7 @@ export class Room {
     if (was === isOnline) return;
     if (isOnline) this.offlineSince.delete(playerId);
     else this.offlineSince.set(playerId, this.now());
+    if (this.disbandAgreed()) return this.finishDisband(); // the last one who had not agreed went offline
     if (this.waitsOn(playerId) || this.paused) this.schedule(); // paused: re-check whether the host is away
     if (this.readyToAdvance()) return this.advanceReady();
     this.changed();
@@ -316,14 +321,19 @@ export class Room {
   restart(byId) {
     this.requireHost(byId);
     this.requirePhase('match_over', 'not_finished');
+    this.backToLobby();
+    this.changed();
+  }
+
+  backToLobby() {
     this.clearTimer();
+    this.clearDisband();
     this.players = this.players.filter((p) => !p.gone);
     for (const p of this.players) p.leftEarly = false;
     Object.assign(this, {
       phase: 'lobby', match: null, prepared: null, hand: null, result: null, returns: [], deadline: null, deadlineSpan: null,
-      dealing: null, claimedBy: null, revealHands: null, ready: new Set(), paused: false,
+      dealing: null, claimedBy: null, revealHands: null, ready: new Set(), paused: false, pausedAt: null, pausedRemaining: null,
     });
-    this.changed();
   }
 
   nextHand(byId) {
@@ -631,6 +641,7 @@ export class Room {
     if (result.sweep) this.say('完胜！');
     this.phase = isMatchOver(match) ? 'match_over' : 'hand_over';
     if (this.phase === 'match_over') {
+      this.clearDisband(); // the match ended on its own
       this.say('本轮结束');
       this.settleRatings();
     }
@@ -720,6 +731,72 @@ export class Room {
     this.passHost(host.id);
     this.say(`房主离线，${this.players.find((p) => p.id === this.hostId).name} 成为房主`);
     this.changed();
+  }
+
+  // ---- disband: end the match early when every player agrees ----------------------
+
+  // Humans whose agreement a disband needs: still in the match and present (an offline seat cannot answer,
+  // except during the reconnect grace after a restart), like the seats a confirmation waits on.
+  disbandVoters() {
+    return this.readyWaiting();
+  }
+
+  // Anyone still in the match may ask; the asker counts as agreeing. Works while paused too.
+  proposeDisband(playerId) {
+    if (!this.inMatch()) throw new HttpError(409, 'not_in_match');
+    const seat = this.activeSeatOf(playerId);
+    if (this.disband) throw new HttpError(409, 'disband_pending');
+    this.disband = { by: seat, yes: [seat], deadline: this.now() + this.delays.disbandVoteMs };
+    this.say(`${this.nameAt(seat)} 申请解散本轮`);
+    if (this.disbandAgreed()) return this.finishDisband(); // nobody else to ask
+    this.setDisbandTimer(this.delays.disbandVoteMs);
+    this.changed();
+  }
+
+  // One "no" ends the request and the match goes on.
+  voteDisband(playerId, agree) {
+    if (!this.disband) throw new HttpError(409, 'no_disband');
+    const seat = this.activeSeatOf(playerId);
+    if (!agree) {
+      this.clearDisband();
+      this.say(`${this.nameAt(seat)} 不同意解散，继续打`);
+      return this.changed();
+    }
+    if (!this.disband.yes.includes(seat)) this.disband.yes.push(seat);
+    if (this.disbandAgreed()) return this.finishDisband();
+    this.changed();
+  }
+
+  disbandAgreed() {
+    if (!this.disband) return false;
+    const voters = this.disbandVoters();
+    return voters.length > 0 && voters.every((seat) => this.disband.yes.includes(seat));
+  }
+
+  // Back to the lobby without recording the match: no ratings, no replay. Seats that left are dropped.
+  finishDisband() {
+    this.players = this.players.filter((p) => p.isBot || !p.leftEarly);
+    if (!this.players.some((p) => p.id === this.hostId)) this.hostId = this.players.find((p) => !p.isBot)?.id ?? null;
+    this.backToLobby();
+    this.say('大家都同意，本轮解散，不计分');
+    this.changed();
+  }
+
+  setDisbandTimer(ms) {
+    if (this.disbandTimer) this.timers.clearTimeout(this.disbandTimer);
+    this.disbandTimer = this.timers.setTimeout(() => {
+      this.disbandTimer = null;
+      if (!this.disband) return;
+      this.disband = null;
+      this.say('没有全部同意，解散取消，继续打');
+      this.changed();
+    }, ms);
+  }
+
+  clearDisband() {
+    this.disband = null;
+    if (this.disbandTimer) this.timers.clearTimeout(this.disbandTimer);
+    this.disbandTimer = null;
   }
 
   // ---- automatic actions ---------------------------------------------------
@@ -848,6 +925,8 @@ export class Room {
 
   destroy() {
     this.clearTimer();
+    if (this.disbandTimer) this.timers.clearTimeout(this.disbandTimer);
+    this.disbandTimer = null;
     if (this.graceTimer) this.timers.clearTimeout(this.graceTimer);
     this.graceTimer = null;
   }
@@ -880,6 +959,7 @@ export class Room {
       ready: [...this.ready],
       paused: this.paused,
       pausedRemaining: this.pausedRemaining,
+      disband: this.disband && { by: this.disband.by, yes: this.disband.yes, inMs: Math.max(0, this.disband.deadline - now) },
       match: this.match,
       prepared: this.prepared,
       returns: this.returns,
@@ -954,6 +1034,11 @@ export class Room {
         claimAt: Object.fromEntries(Object.entries(claimInMs).map(([seat, ms]) => [seat, now + ms])),
       };
     }
+    if (s.disband) {
+      // The vote clock restarts from what was left, plus the reconnect grace: nobody can answer until they are back.
+      const ms = s.disband.inMs + (room.delays.restoreGraceMs || 0);
+      room.disband = { by: s.disband.by, yes: s.disband.yes, deadline: now + ms };
+    }
     if (s.handRecord) {
       const { sinceLastMs, ...record } = s.handRecord;
       room.handRecord = { ...record, lastAt: now - sinceLastMs };
@@ -963,6 +1048,7 @@ export class Room {
     try {
       room.startGrace();
       room.schedule(true);
+      if (room.disband) room.setDisbandTimer(room.disband.deadline - now);
     } catch (err) {
       room.destroy();
       throw err;
@@ -1073,6 +1159,10 @@ export class Room {
       ...(playerId === this.hostId ? { balanceDeal: this.balanceDeal } : {}),
       paused: this.paused,
       pausedRemaining: this.pausedRemaining,
+      // An open request to end the match early: who asked, who agreed so far, and whose answer it still needs.
+      disband: this.disband
+        ? { by: this.disband.by, yes: [...this.disband.yes], voters: this.disbandVoters(), deadline: this.disband.deadline }
+        : null,
       dealRounds: rounds,
       dealTotalRounds: this.phase === 'dealing' ? this.dealing.total : null,
       dealStartedAt: this.phase === 'dealing' ? this.dealing.startedAt : null,

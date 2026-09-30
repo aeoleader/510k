@@ -1447,3 +1447,38 @@ html.landscape .review-bar .rb-title { font-size: 14px; }
   /* keep the stamps readable briefly; the element is removed by script */
   .fx-stamp span, .fx-banner span { opacity: 1; }
 }
+
+/* exit: leave the table or disband the match */
+.exit-btn { color: #f5a097; }
+.overlay.exit-layer { z-index: 12; }
+.exit-dialog { width: min(560px, 100%); }
+.exit-dialog h2 { font-size: 22px; }
+.exit-dialog h3 { margin: 0 0 4px; font-size: 18px; }
+.exit-dialog p { font-size: 16px; color: var(--text); }
+.exit-dialog p b { color: var(--accent-2); }
+.exit-option {
+  display: flex; align-items: center; gap: 14px; justify-content: space-between;
+  padding: 12px 14px; border-radius: 12px; background: var(--bg-2); border: 1px solid var(--line);
+}
+.exit-option p { color: var(--muted); font-size: 15px; }
+.exit-choices { display: flex; gap: 12px; flex-wrap: wrap; }
+.exit-choices .exit-big { flex: 1 1 180px; }
+.exit-big { min-height: 52px; padding: 0 20px; font-size: 18px; font-weight: 700; white-space: nowrap; flex: none; }
+.exit-foot { font-size: 14px !important; color: var(--muted) !important; }
+.disband-bar {
+  position: fixed; left: 50%; top: calc(var(--topbar-h) + 8px); transform: translateX(-50%); z-index: 11;
+  display: flex; align-items: center; gap: 12px; padding: 8px 10px 8px 16px; max-width: calc(100% - 16px);
+  border-radius: 999px; background: var(--panel); border: 1px solid var(--accent); box-shadow: var(--shadow);
+  font-size: 15px; animation: fade 0.2s ease;
+}
+.disband-bar b { color: var(--accent-2); }
+@media (max-width: 560px) {
+  .exit-option { flex-direction: column; align-items: stretch; }
+}
+html.landscape .exit-dialog { gap: 8px; width: min(640px, 100%); }
+html.landscape .exit-dialog h2 { font-size: 18px; }
+html.landscape .exit-dialog p { font-size: 14px; }
+html.landscape .exit-option { padding: 8px 12px; }
+html.landscape .exit-big { min-height: 44px; font-size: 16px; }
+/* landscape: the top-left corner of the felt, clear of the top seat */
+html.landscape .disband-bar { left: 8px; transform: none; font-size: 14px; padding: 4px 6px 4px 12px; }

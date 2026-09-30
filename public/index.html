@@ -31,6 +31,7 @@
     <div id="tableTools" class="table-tools" hidden>
       <button id="playLogBtn" type="button" class="btn tool-btn" aria-expanded="false" aria-controls="playLog">出牌记录</button>
       <button id="soundBtn" type="button" class="btn tool-btn" aria-pressed="true">声音：开</button>
+      <button id="exitBtn" type="button" class="btn tool-btn exit-btn" aria-haspopup="dialog">退出</button>
     </div>
     <a class="rules-link" href="/rules.html" target="_blank" rel="noopener">规则</a>
   </header>
@@ -80,6 +81,8 @@
   </main>
 
   <div id="overlay" class="overlay" hidden></div>
+  <div id="disbandBar" class="disband-bar" role="status" hidden></div>
+  <div id="exitLayer" class="overlay exit-layer" hidden></div>
   <div id="toast" class="toast" role="status" hidden></div>
 </body>
 </html>

@@ -114,7 +114,26 @@ test('input validation', async () => {
   assert.equal((await post('/api/rooms/resume', { code, token }, 409)).error, 'not_paused');
   assert.equal((await post('/api/rooms/claim-three', { code, token }, 409)).error, 'not_dealing');
   assert.equal((await post('/api/rooms/ready', { code, token }, 409)).error, 'not_hand_over');
+  assert.equal((await post('/api/rooms/disband', { code, token }, 409)).error, 'not_in_match');
+  assert.equal((await post('/api/rooms/disband-vote', { code, token, agree: true }, 409)).error, 'no_disband');
   assert.equal((await post('/api/rooms/leave', { code, token })).ok, true);
+});
+
+test('disband over HTTP: both humans agree and the room is back in the lobby', async () => {
+  const host = await post('/api/rooms/create', { name: '甲' });
+  const guest = await post('/api/rooms/join', { code: host.code, name: '乙' });
+  const hostView = await listen(host.code, host.token);
+  const guestView = await listen(guest.code, guest.token);
+  for (let i = 0; i < 2; i++) await post('/api/rooms/add-bot', { code: host.code, token: host.token });
+  await post('/api/rooms/start', { code: host.code, token: host.token });
+  await post('/api/rooms/disband', { code: guest.code, token: guest.token });
+  await until(() => hostView.view?.disband?.by === 1);
+  assert.deepEqual(hostView.view.disband.voters, [0, 1]);
+  await post('/api/rooms/disband-vote', { code: host.code, token: host.token, agree: true });
+  await until(() => hostView.view?.phase === 'lobby' && guestView.view?.phase === 'lobby');
+  assert.equal(hostView.view.disband, null);
+  await post('/api/rooms/leave', { code: guest.code, token: guest.token });
+  await post('/api/rooms/leave', { code: host.code, token: host.token });
 });
 
 test('发牌平衡 over HTTP: host-only, strict, lobby-only, and only in the host\'s view', async () => {

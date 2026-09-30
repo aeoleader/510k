@@ -185,6 +185,8 @@ export function createApp({ publicDir, engineDir, delays, timers, now, accounts 
     '/api/rooms/ready': ({ room, player }) => room.markReady(player.id),
     '/api/rooms/pause': ({ room, player }) => { limits.pause.hit(`${player.id}|pause`); room.pause(player.id); },
     '/api/rooms/resume': ({ room, player }) => { limits.pause.hit(`${player.id}|resume`); room.resume(player.id); },
+    '/api/rooms/disband': ({ room, player }) => { limits.pause.hit(`${player.id}|disband`); room.proposeDisband(player.id); },
+    '/api/rooms/disband-vote': ({ room, player, body }) => room.voteDisband(player.id, body.agree === true),
     '/api/rooms/next': ({ room, player }) => room.nextHand(player.id),
     '/api/rooms/restart': ({ room, player }) => room.restart(player.id),
   };
