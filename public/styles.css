@@ -1381,6 +1381,21 @@ html.landscape .review-bar .rb-title { font-size: 12px; }
 .pl-round li.pl-trick { display: block; padding: 4px 10px; border-radius: 8px; background: rgba(240, 165, 58, 0.12); color: var(--text); font-size: 15px; }
 .pl-trick b { color: var(--accent-2); }
 .pl-empty { color: var(--muted); font-size: 16px; padding: 12px 0; }
+.sound-panel { width: min(360px, calc(100% - 20px)); }
+.snd-list { display: grid; gap: 8px; padding: 10px 12px 12px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.snd-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 56px; padding: 8px 12px;
+  border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, 0.04); color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.snd-text { display: grid; gap: 2px; min-width: 0; }
+.snd-text b { font-size: 18px; }
+.snd-text small { font-size: 13px; color: var(--muted); }
+.snd-switch {
+  flex: none; min-width: 52px; padding: 6px 0; border-radius: 999px; text-align: center; font-size: 17px; font-weight: 700;
+  background: rgba(255, 255, 255, 0.1); color: var(--muted);
+}
+.snd-row[aria-checked="true"] { border-color: var(--accent); }
+.snd-row[aria-checked="true"] .snd-switch { background: var(--accent); color: var(--accent-ink); }
 
 @media (max-width: 820px) {
   .seat { width: 104px; }
@@ -1446,4 +1461,13 @@ html.landscape .review-bar .rb-title { font-size: 14px; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
   /* keep the stamps readable briefly; the element is removed by script */
   .fx-stamp span, .fx-banner span { opacity: 1; }
+}
+/* Short landscape phones: the three switches sit side by side so all stay in view. */
+@media (max-height: 520px) {
+  html.landscape .sound-panel { width: min(440px, calc(100% - 16px)); }
+  html.landscape .sound-panel .pl-head { padding: 4px 8px 4px 14px; }
+  html.landscape .sound-panel .pl-head .btn { min-height: 36px; }
+  html.landscape .snd-list { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 8px 10px 10px; }
+  html.landscape .snd-row { flex-direction: column; justify-content: center; gap: 6px; min-height: 0; padding: 8px 6px; text-align: center; }
+  html.landscape .snd-text small { display: none; }
 }

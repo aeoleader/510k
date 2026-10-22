@@ -30,7 +30,7 @@
     <button id="rotateBtn" type="button" class="btn btn-ghost rotate-btn" hidden>横屏</button>
     <div id="tableTools" class="table-tools" hidden>
       <button id="playLogBtn" type="button" class="btn tool-btn" aria-expanded="false" aria-controls="playLog">出牌记录</button>
-      <button id="soundBtn" type="button" class="btn tool-btn" aria-pressed="true">声音：开</button>
+      <button id="soundBtn" type="button" class="btn tool-btn" aria-expanded="false" aria-controls="soundPanel">声音</button>
     </div>
     <a class="rules-link" href="/rules.html" target="_blank" rel="noopener">规则</a>
   </header>
@@ -71,6 +71,7 @@
       <div id="fx" class="fx-layer" aria-hidden="true"></div>
       <aside id="counterPanel" class="counter" aria-label="记牌器" hidden></aside>
       <aside id="playLog" class="play-log" aria-label="本局出牌记录" hidden></aside>
+      <aside id="soundPanel" class="play-log sound-panel" aria-label="声音" hidden></aside>
     </section>
     <section class="dock" aria-label="我的手牌">
       <div id="actionBar" class="action-bar"></div>

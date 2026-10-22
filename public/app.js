@@ -6,6 +6,7 @@ import {
   TYPE_LABEL, esc, initial, shortName, cardHtml as baseCardHtml, badgeHtml, fanHtml,
 } from '/ui.js';
 import { Effects } from '/effects.js';
+import { audioContext, beep as tone, speak, playWords, setMusic, unlock, voiceAvailable } from '/audio.js';
 import { quickPicks, comboLabel } from '/engine/picks.js';
 
 const ERROR_TEXT = {
@@ -70,7 +71,10 @@ const state = {
   reviewKey: null, // hand + phase the review collapse state belongs to
   reviewCollapsed: false,
   playLogOpen: false,
-  sound: readPref('sound', '1') === '1',
+  sound: readPref('sound', '1') === '1', // chimes
+  voice: readPref('voice', '1') === '1', // spoken play calls
+  music: readPref('music', '1') === '1', // quiet background music at the table
+  soundOpen: false,
   returnChimed: null, // hand number the return prompt already chimed for
   urgentSecs: null, // last countdown second a warning tick sounded for
 };
@@ -340,6 +344,7 @@ function render() {
   $('roomBadge').textContent = state.code ?? '';
   renderConnection();
   renderAccountChip();
+  setMusic(state.music && Boolean(v) && v.phase !== 'lobby');
   renderPauseButton(v);
   if (!inRoom) renderEntry();
   if (!v) {
@@ -582,6 +587,7 @@ function renderTable(v) {
   const stage = { width: wrap.offsetWidth, height: wrap.offsetHeight };
   const effects = [];
   const seats = [];
+  let call = null; // newest fresh play, spoken aloud
   const landscape = isLandscape();
   const dealing = v.phase === 'dealing' ? dealProgress(v) : null;
   state.dealDrawn = dealing ? { key: v.handNo, ...dealing } : null;
@@ -623,6 +629,7 @@ function renderTable(v) {
       const body = action.pass ? '<span class="pass-tag">不要</span>' : fanHtml(action.cards, size);
       seats.push(`<div class="played ${isTop ? 'is-top' : ''} ${fresh ? 'fresh' : ''}" style="--x:${px}%;--y:${py}%;--dx:${dx}px;--dy:${dy}px">${body}</div>`);
       if (fresh && action.cards) effects.push(() => fx.play({ type: action.type, level: action.level, x: px, y: py }));
+      if (fresh && (!call || seqOf(action) > seqOf(call))) call = action;
       state.fxSeen.add(action.id);
     }
     const headKey = `head:${v.handNo}:${p.seat}`;
@@ -662,7 +669,7 @@ function renderTable(v) {
     center = v.phase === 'playing' ? `<span class="idle">${esc(playerAt(v.turn).name.replace(/\(机器人\)$/, ''))} 先出</span>` : '';
   }
   $('centerArea').innerHTML = turnIndicator(v) + center;
-  announceMyTurn(v);
+  announceMyTurn(v, call ? playWords(call) : '');
   $('logTicker').innerHTML = [...v.log].slice(-3).reverse().map((l) => `<li>${esc(l.text)}</li>`).join('');
 
   // Actions first: in landscape they share the dock row with the hand, so the hand is sized to what they leave.
@@ -672,6 +679,7 @@ function renderTable(v) {
   else renderHand(v);
   renderCounter(v);
   renderPlayLog(v);
+  renderSoundPanel();
 }
 
 // Where a seat sits on the stage for effects; in landscape my own seat is the dock.
@@ -768,13 +776,32 @@ function renderCounter(v) {
     </div>`;
 }
 
+// Floating panel with one large switch per kind of sound.
+function renderSoundPanel() {
+  const panel = $('soundPanel');
+  const btn = $('soundBtn');
+  btn.setAttribute('aria-expanded', String(state.soundOpen));
+  btn.classList.toggle('on', state.soundOpen);
+  panel.hidden = !state.soundOpen;
+  if (panel.hidden) return;
+  const row = (id, key, title, note) => `
+    <button id="${id}" type="button" class="snd-row" data-key="${key}" role="switch" aria-checked="${state[key]}">
+      <span class="snd-text"><b>${title}</b><small>${note}</small></span>
+      <span class="snd-switch">${state[key] ? '开' : '关'}</span>
+    </button>`;
+  panel.innerHTML = `
+    <div class="pl-head"><h3>声音</h3><button id="soundClose" type="button" class="btn">关闭</button></div>
+    <div class="snd-list">
+      ${row('voiceToggle', 'voice', '语音播报', voiceAvailable() ? '念出每手牌，如“对K”“炸弹”“不要”' : '这台设备没有中文语音，无法播报')}
+      ${row('soundToggle', 'sound', '提示音', '轮到你时“叮咚”一声')}
+      ${row('musicToggle', 'music', '背景音乐', '轻柔的古筝风小曲，播报时自动变小声')}
+    </div>`;
+}
+
 // Floating panel with every play of this hand, grouped by trick, newest at the bottom.
 function renderPlayLog(v) {
   const panel = $('playLog');
   const btn = $('playLogBtn');
-  const sound = $('soundBtn');
-  sound.setAttribute('aria-pressed', String(state.sound));
-  sound.textContent = state.sound ? '声音：开' : '声音：关';
   const plays = v.plays || [];
   btn.hidden = !plays.length && v.phase !== 'playing';
   btn.setAttribute('aria-expanded', String(state.playLogOpen));
@@ -810,39 +837,16 @@ function renderPlayLog(v) {
   else fresh.scrollTop = list.scrollTop;
 }
 
-// Short chimes made with Web Audio (no sound files). Browsers only allow sound after a tap, so the
-// context is created on the first tap anywhere and reused.
-let audio = null;
-function audioContext() {
-  const AC = window.AudioContext || window.webkitAudioContext;
-  if (!AC) return null;
-  try {
-    if (!audio) audio = new AC();
-    if (audio.state === 'suspended') audio.resume();
-  } catch { return null; }
-  return audio;
-}
-document.addEventListener('pointerdown', () => { if (state.sound) audioContext(); }, { passive: true });
+// Browsers only allow sound after a tap, so audio is unlocked on the first tap anywhere.
+document.addEventListener('pointerdown', () => {
+  if (state.sound || state.voice || state.music) unlock();
+}, { passive: true });
 
-function beep(notes, volume = 0.25) {
-  if (!state.sound) return;
-  const ctx = audioContext();
-  if (!ctx) return;
-  let t = ctx.currentTime + 0.02;
-  for (const [freq, secs] of notes) {
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(freq, t);
-    gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.exponentialRampToValueAtTime(volume, t + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + secs);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(t);
-    osc.stop(t + secs + 0.05);
-    t += secs * 0.8;
-  }
+function beep(notes, volume) {
+  if (state.sound) tone(notes, volume);
+}
+function say(text) {
+  if (state.voice) speak(text);
 }
 const chimeMyTurn = () => beep([[660, 0.18], [880, 0.32]]);
 const chimeUrgent = () => beep([[990, 0.12]], 0.18);
@@ -861,16 +865,21 @@ function turnIndicator(v) {
   return `<span class="turn-now"><i class="turn-arrow" style="--a:${deg}deg" aria-hidden="true"></i>轮到 <b>${esc(playerAt(v.turn).name.replace(/\(机器人\)$/, ''))}</b></span>`;
 }
 
-// When the turn comes to me: a banner, a short vibration where supported, and a lit-up dock.
-function announceMyTurn(v) {
+const seqOf = (action) => Number(String(action.id).split(':')[1]) || 0;
+
+// When the turn comes to me: a banner, a spoken and a chimed call, a short vibration where supported,
+// and a lit-up dock. `call` is the play just made, said first so the two do not cut each other off.
+function announceMyTurn(v, call) {
   const mine = v.phase === 'playing' && v.turn === v.you?.seat;
   document.querySelector('.dock').classList.toggle('my-turn', mine);
   if (mine && !state.wasMyTurn && state.fxPrimed) {
     fx.banner('轮到你了');
     chimeMyTurn();
+    call = call ? `${call}，轮到你了` : '轮到你了';
     try { navigator.vibrate?.(40); } catch { /* not supported */ }
   }
   state.wasMyTurn = mine;
+  say(call);
 }
 
 // Card width and overlap for a row of `widest` cards with `gaps` px of group spacing.
@@ -1422,14 +1431,27 @@ document.addEventListener('click', (e) => {
     case 'playLogBtn':
     case 'playLogClose':
       state.playLogOpen = target.id === 'playLogBtn' ? !state.playLogOpen : false;
+      if (state.playLogOpen) state.soundOpen = false;
       render();
       break;
     case 'soundBtn':
-      state.sound = !state.sound;
-      writePref('sound', state.sound ? '1' : '0');
-      if (state.sound) beep([[880, 0.15]]);
+    case 'soundClose':
+      state.soundOpen = target.id === 'soundBtn' ? !state.soundOpen : false;
+      if (state.soundOpen) state.playLogOpen = false;
       render();
       break;
+    case 'soundToggle':
+    case 'voiceToggle':
+    case 'musicToggle': {
+      const key = target.dataset.key;
+      state[key] = !state[key];
+      writePref(key, state[key] ? '1' : '0');
+      unlock();
+      if (key === 'sound' && state.sound) beep([[880, 0.15]]);
+      if (key === 'voice' && state.voice) say('语音播报已打开');
+      render();
+      break;
+    }
     case 'rotateBtn': toggleLandscape(); break;
     case 'copyLinkBtn':
     case 'roomBadge':
